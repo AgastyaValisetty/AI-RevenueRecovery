@@ -1,0 +1,17 @@
+# ============================================================
+# Generated / reference documentation — not version controlled
+# ============================================================
+
+# Original architecture specification (both case spellings)
+ARCHITECTURE.md
+Architecture.md
+
+# Deep-dive companion spec (generated from ARCHITECTURE.md)
+architecture2.md
+
+# UML design document
+UML_Design.md
+
+# PlantUML diagram sources (generated from UML_Design.md)
+*.puml
+*.pu
