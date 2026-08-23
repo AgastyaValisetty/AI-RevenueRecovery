@@ -1,0 +1,28 @@
+name: revenue-recovery
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: revenue_recovery_postgres
+    environment:
+      POSTGRES_USER: simulator
+      POSTGRES_PASSWORD: simulator_dev
+      POSTGRES_DB: revenue_recovery
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simulator -d revenue_recovery"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - simulation_network
+
+volumes:
+  postgres_data:
+
+networks:
+  simulation_network:
+    driver: bridge
