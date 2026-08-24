@@ -1,0 +1,37 @@
+{
+  "description": "Modular merchant catalog. Add new merchants here to extend the simulation. Each merchant has a name, type, and products array.",
+  "merchants": [
+    {
+      "name": "Spotifly",
+      "merchant_type": "SUBSCRIPTION_ONLY",
+      "products": [
+        { "name": "Spotifly Monthly", "price": "119.00", "product_type": "SUBSCRIPTION" }
+      ]
+    },
+    {
+      "name": "Petflix",
+      "merchant_type": "SUBSCRIPTION_ONLY",
+      "products": [
+        { "name": "Petflix Monthly", "price": "199.00", "product_type": "SUBSCRIPTION" }
+      ]
+    },
+    {
+      "name": "Amazin",
+      "merchant_type": "MIXED",
+      "products": [
+        { "name": "Amazin Prime", "price": "599.00", "product_type": "SUBSCRIPTION" },
+        { "name": "Sony Headphones", "price": "24999.00", "product_type": "ONE_TIME" },
+        { "name": "Kindle 2024", "price": "10999.00", "product_type": "ONE_TIME" }
+      ]
+    },
+    {
+      "name": "Flip Cartel",
+      "merchant_type": "MIXED",
+      "products": [
+        { "name": "Flip Cartel Plus", "price": "499.00", "product_type": "SUBSCRIPTION" },
+        { "name": "Smartphone", "price": "45000.00", "product_type": "ONE_TIME" },
+        { "name": "Running Shoes", "price": "3299.00", "product_type": "ONE_TIME" }
+      ]
+    }
+  ]
+}

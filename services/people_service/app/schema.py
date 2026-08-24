@@ -171,11 +171,11 @@ class PaymentAttemptRow(Base):
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     payment_method: Mapped[str] = mapped_column(String(32))
-    source_account_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("bank_accounts.account_id")
+    source_account_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("bank_accounts.account_id"), nullable=True
     )
-    destination_account_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("bank_accounts.account_id")
+    destination_account_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("bank_accounts.account_id"), nullable=True
     )
     status: Mapped[str] = mapped_column(String(32))
     failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)

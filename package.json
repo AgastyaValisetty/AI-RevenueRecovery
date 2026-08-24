@@ -1,0 +1,29 @@
+{
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.1.0",
+    "axios": "^1.19.0",
+    "bootstrap": "^5.3.8",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2"
+  },
+  "name": "ai-revenuerecovery",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgastyaValisetty/AI-RevenueRecovery.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/AgastyaValisetty/AI-RevenueRecovery/issues"
+  },
+  "homepage": "https://github.com/AgastyaValisetty/AI-RevenueRecovery#readme"
+}

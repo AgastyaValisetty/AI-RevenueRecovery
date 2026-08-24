@@ -1,6 +1,6 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 
@@ -189,6 +189,21 @@ def _intent_to_row(intent: PaymentIntent) -> PaymentIntentRow:
     )
 
 
+def _intent_from_row(row: PaymentIntentRow) -> PaymentIntent:
+    return PaymentIntent(
+        intent_id=row.intent_id,
+        person_id=row.person_id,
+        merchant_id=row.merchant_id,
+        product_id=row.product_id,
+        amount=row.amount,
+        payment_method=row.payment_method,
+        status=row.status,
+        related_subscription_id=row.related_subscription_id,
+        created_at=row.created_at,
+        expires_at=row.expires_at,
+    )
+
+
 def _ledger_to_row(entry: LedgerEntry) -> LedgerEntryRow:
     return LedgerEntryRow(
         entry_id=entry.entry_id,
@@ -201,6 +216,21 @@ def _ledger_to_row(entry: LedgerEntry) -> LedgerEntryRow:
         simulation_timestamp=entry.simulation_timestamp,
         created_at=entry.created_at,
         metadata_json=entry.metadata_json,
+    )
+
+
+def _ledger_from_row(row: LedgerEntryRow) -> LedgerEntry:
+    return LedgerEntry(
+        entry_id=row.entry_id,
+        event_type=row.event_type,
+        from_account_id=row.from_account_id,
+        to_account_id=row.to_account_id,
+        amount=row.amount,
+        related_attempt_id=row.related_attempt_id,
+        related_subscription_id=row.related_subscription_id,
+        simulation_timestamp=row.simulation_timestamp,
+        created_at=row.created_at,
+        metadata_json=row.metadata_json or {},
     )
 
 
@@ -278,6 +308,16 @@ class ProductRepository:
             ).all()
             return [_product_from_row(r) for r in rows]
 
+    def first_product_for_merchant(self, merchant_id) -> UUID:
+        """Return the first product UUID for a merchant (for manual payments)."""
+        with self._db.session() as session:
+            row = session.scalar(
+                select(ProductRow).where(ProductRow.merchant_id == merchant_id)
+            )
+            if row is None:
+                return uuid4()
+            return row.product_id
+
 
 class SubscriptionRepository:
     def __init__(self, db: Database):
@@ -303,6 +343,32 @@ class SubscriptionRepository:
             ).all()
             return [_subscription_from_row(r) for r in rows]
 
+    def find_all(self, limit: int = 500) -> list[Subscription]:
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(SubscriptionRow).order_by(SubscriptionRow.created_at.desc()).limit(limit)
+            ).all()
+            return [_subscription_from_row(r) for r in rows]
+
+    def find(self, subscription_id: UUID) -> Subscription | None:
+        with self._db.session() as session:
+            row = session.get(SubscriptionRow, subscription_id)
+            return _subscription_from_row(row) if row else None
+
+    def save(self, subscription: Subscription) -> None:
+        with self._db.session() as session:
+            session.merge(_subscription_to_row(subscription))
+
+    def advance_billing_date(self, subscription_ids: list[UUID], days: int = 30) -> None:
+        if not subscription_ids:
+            return
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(SubscriptionRow).where(SubscriptionRow.subscription_id.in_(subscription_ids))
+            ).all()
+            for r in rows:
+                r.next_billing_date = r.next_billing_date + timedelta(days=days)
+
 
 class PaymentIntentRepository:
     def __init__(self, db: Database):
@@ -317,6 +383,71 @@ class PaymentIntentRepository:
             return session.scalar(
                 select(func.count()).select_from(PaymentIntentRow)
             )
+
+    def find_all(self, limit: int = 500) -> list[PaymentIntent]:
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(PaymentIntentRow).order_by(PaymentIntentRow.created_at.desc()).limit(limit)
+            ).all()
+            return [_intent_from_row(r) for r in rows]
+
+    def find_pending(self) -> list[PaymentIntent]:
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(PaymentIntentRow).where(PaymentIntentRow.status == "PENDING")
+            ).all()
+            return [_intent_from_row(r) for r in rows]
+
+    def save(self, intent: PaymentIntent) -> None:
+        with self._db.session() as session:
+            session.merge(_intent_to_row(intent))
+
+    def settled_by_merchant(self, merchant_id) -> list[PaymentIntent]:
+        """Return all SETTLED payment intents for a given merchant."""
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(PaymentIntentRow)
+                .where(
+                    PaymentIntentRow.merchant_id == merchant_id,
+                    PaymentIntentRow.status == "SETTLED",
+                )
+                .order_by(PaymentIntentRow.created_at.desc())
+            ).all()
+            return [_intent_from_row(r) for r in rows]
+
+    def revenue_by_merchant(self) -> dict:
+        """Return {merchant_id: total_revenue} for all merchants from SETTLED intents."""
+        with self._db.session() as session:
+            rows = session.execute(
+                select(
+                    PaymentIntentRow.merchant_id,
+                    func.coalesce(func.sum(PaymentIntentRow.amount), 0).label("total"),
+                )
+                .where(PaymentIntentRow.status == "SETTLED")
+                .group_by(PaymentIntentRow.merchant_id)
+            ).all()
+            return {row.merchant_id: row.total for row in rows}
+
+    def monthly_revenue(self, merchant_id) -> list[dict]:
+        """Return monthly revenue breakdown for a merchant from SETTLED intents."""
+        with self._db.session() as session:
+            rows = session.execute(
+                select(
+                    func.to_char(PaymentIntentRow.created_at, "YYYY-MM").label("month"),
+                    func.coalesce(func.sum(PaymentIntentRow.amount), 0).label("total"),
+                    func.count().label("count"),
+                )
+                .where(
+                    PaymentIntentRow.merchant_id == merchant_id,
+                    PaymentIntentRow.status == "SETTLED",
+                )
+                .group_by("month")
+                .order_by("month")
+            ).all()
+            return [
+                {"month": r.month, "total_revenue": r.total, "transaction_count": r.count}
+                for r in rows
+            ]
 
 
 class LedgerRepository:
@@ -333,6 +464,20 @@ class LedgerRepository:
                 select(func.count()).select_from(LedgerEntryRow)
             )
 
+    def find_recent(self, limit: int = 500) -> list[LedgerEntry]:
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(LedgerEntryRow).order_by(LedgerEntryRow.simulation_timestamp.desc(), LedgerEntryRow.created_at.desc()).limit(limit)
+            ).all()
+            return [_ledger_from_row(r) for r in rows]
+
+    def latest_simulation_date(self) -> date | None:
+        with self._db.session() as session:
+            latest_ts = session.scalar(
+                select(func.max(LedgerEntryRow.simulation_timestamp))
+            )
+            return latest_ts.date() if latest_ts else None
+
     def balance_of(self, account_id: UUID) -> Decimal:
         with self._db.session() as session:
             credits = session.scalar(
@@ -346,6 +491,35 @@ class LedgerRepository:
                 )
             )
             return Decimal(credits) - Decimal(debits)
+
+    def balances_for_accounts(self, account_ids: list[UUID]) -> dict[UUID, Decimal]:
+        if not account_ids:
+            return {}
+        with self._db.session() as session:
+            credit_rows = session.execute(
+                select(
+                    LedgerEntryRow.to_account_id,
+                    func.coalesce(func.sum(LedgerEntryRow.amount), 0).label("total"),
+                )
+                .where(LedgerEntryRow.to_account_id.in_(account_ids))
+                .group_by(LedgerEntryRow.to_account_id)
+            ).all()
+            debit_rows = session.execute(
+                select(
+                    LedgerEntryRow.from_account_id,
+                    func.coalesce(func.sum(LedgerEntryRow.amount), 0).label("total"),
+                )
+                .where(LedgerEntryRow.from_account_id.in_(account_ids))
+                .group_by(LedgerEntryRow.from_account_id)
+            ).all()
+            credit_map = {row.to_account_id: row.total for row in credit_rows}
+            debit_map = {row.from_account_id: row.total for row in debit_rows}
+            balances = {}
+            for account_id in account_ids:
+                credits = credit_map.get(account_id, Decimal(0))
+                debits = debit_map.get(account_id, Decimal(0))
+                balances[account_id] = Decimal(credits) - Decimal(debits)
+            return balances
 
 
 

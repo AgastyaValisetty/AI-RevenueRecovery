@@ -1,3 +1,5 @@
+import json
+import os
 import random
 from datetime import date, timedelta
 from decimal import Decimal
@@ -112,30 +114,34 @@ class PersonGenerator:
 
 
 class MerchantGenerator:
-    _CATALOG = [
-        ("Spotifly", "SUBSCRIPTION_ONLY", [
-            ("Spotifly Monthly", Decimal("119.00"), "SUBSCRIPTION"),
-        ]),
-        ("Petflix", "SUBSCRIPTION_ONLY", [
-            ("Petflix Monthly", Decimal("199.00"), "SUBSCRIPTION"),
-        ]),
-        ("Amazin", "MIXED", [
-            ("Amazin Prime", Decimal("599.00"), "SUBSCRIPTION"),
-            ("Sony Headphones", Decimal("24999.00"), "ONE_TIME"),
-            ("Kindle 2024", Decimal("10999.00"), "ONE_TIME"),
-        ]),
-        ("Flip Cartel", "MIXED", [
-            ("Flip Cartel Plus", Decimal("499.00"), "SUBSCRIPTION"),
-            ("Smartphone", Decimal("45000.00"), "ONE_TIME"),
-            ("Running Shoes", Decimal("3299.00"), "ONE_TIME"),
-        ]),
-    ]
+    """Loads merchant catalog from merchant_catalog.json.
+
+    To add a new merchant, simply append an entry to the JSON file and
+    re-run initialization (or use POST /api/merchants).  No code changes needed.
+    """
+
+    _CATALOG_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "merchant_catalog.json"
+    )
+
+    def __init__(self, catalog_path: str | None = None):
+        self._catalog_path = catalog_path or self._CATALOG_PATH
+
+    def _load_catalog(self) -> list[dict]:
+        if not os.path.exists(self._catalog_path):
+            return []
+        with open(self._catalog_path, "r") as f:
+            data = json.load(f)
+        return data.get("merchants", [])
 
     def generate(self, bank_id: UUID) -> tuple[list[Merchant], list[Product]]:
+        catalog = self._load_catalog()
         merchants = []
         products = []
         timestamp = now()
-        for name, merchant_type, catalog in self._CATALOG:
+        for entry in catalog:
+            name = entry["name"]
+            merchant_type = entry["merchant_type"]
             merchant_id = uuid4()
             merchants.append(
                 Merchant(
@@ -146,19 +152,36 @@ class MerchantGenerator:
                     created_at=timestamp,
                 )
             )
-            for product_name, price, product_type in catalog:
+            for prod in entry.get("products", []):
                 products.append(
                     Product(
                         product_id=uuid4(),
                         merchant_id=merchant_id,
-                        name=product_name,
-                        price=price,
-                        product_type=product_type,
-                        billing_cycle=MONTHLY if product_type == "SUBSCRIPTION" else None,
+                        name=prod["name"],
+                        price=Decimal(prod["price"]),
+                        product_type=prod["product_type"],
+                        billing_cycle=MONTHLY if prod["product_type"] == "SUBSCRIPTION" else None,
                         created_at=timestamp,
                     )
                 )
         return merchants, products
+
+    @staticmethod
+    def add_merchant_to_catalog(
+        name: str, merchant_type: str, products: list[dict]
+    ) -> None:
+        """Append a new merchant entry to the JSON config file."""
+        path = MerchantGenerator._CATALOG_PATH
+        if os.path.exists(path):
+            with open(path, "r") as f:
+                data = json.load(f)
+        else:
+            data = {"description": "", "merchants": []}
+        data.setdefault("merchants", []).append(
+            {"name": name, "merchant_type": merchant_type, "products": products}
+        )
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
 
 
 class SubscriptionGenerator:

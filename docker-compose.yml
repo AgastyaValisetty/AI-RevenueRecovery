@@ -20,6 +20,65 @@ services:
     networks:
       - simulation_network
 
+  people_service:
+    build:
+      context: ./services/people_service
+      dockerfile: Dockerfile
+    container_name: people_service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=simulator
+      - DB_PASSWORD=simulator_dev
+      - DB_NAME=revenue_recovery
+    ports:
+      - "8000:8000"
+    networks:
+      - simulation_network
+
+  bank_service:
+    build:
+      context: ./services/bank_service
+      dockerfile: Dockerfile
+    container_name: bank_service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=simulator
+      - DB_PASSWORD=simulator_dev
+      - DB_NAME=revenue_recovery
+      - BANK_PORT=8002
+    ports:
+      - "8002:8002"
+    networks:
+      - simulation_network
+
+  lazerpay_service:
+    build:
+      context: ./services/lazerpay_service
+      dockerfile: Dockerfile
+    container_name: lazerpay_service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=simulator
+      - DB_PASSWORD=simulator_dev
+      - DB_NAME=revenue_recovery
+      - BANK_URL=http://bank_service:8002
+    ports:
+      - "8001:8001"
+    networks:
+      - simulation_network
+
 volumes:
   postgres_data:
 
