@@ -244,6 +244,13 @@ class SpendingEngine:
         )
         total = (amount + gst_amount).quantize(_MONEY, rounding=ROUND_HALF_UP)
 
+        # Never spend more than the person currently holds — prevents the
+        # balance from going negative on living costs.
+        if current_balance is not None:
+            total = min(total, current_balance).quantize(_MONEY, rounding=ROUND_HALF_UP)
+            if total <= 0:
+                return None
+
         category = self._rng.choice(self._config.spending.category_list)
         return LedgerEntry(
             entry_id=uuid4(),

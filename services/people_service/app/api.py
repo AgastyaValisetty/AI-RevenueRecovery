@@ -710,7 +710,8 @@ def process_all_payments(request: Request) -> dict:
             ledger_entries.append(LedgerEntry(
                 entry_id=_uuid4(),
                 event_type=PAYMENT_FAILED,
-                from_account_id=debit_account,
+                # No money moves on a failed payment — don't debit the account.
+                from_account_id=None,
                 to_account_id=None,
                 amount=intent.amount,
                 simulation_timestamp=sim_ts,

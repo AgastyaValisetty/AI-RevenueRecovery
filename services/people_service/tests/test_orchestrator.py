@@ -155,3 +155,34 @@ class TestOrchestratorPhases:
         purchase_intents = [i for i in intents if i.related_subscription_id is None]
         # There should be some non-subscription intents (e-commerce)
         assert len(purchase_intents) > 0
+
+
+class TestNoNegativeBalances:
+    """Failed payments and over-budget living costs must never drive a
+    person's account balance below zero."""
+
+    def test_run_never_produces_negative_balance(self, db, config):
+        orch = build_orchestrator(db, seed=7, config=config)
+        orch.initialize(people_count=50, seed=7)
+        orch.run_hours(240)  # 10 days
+
+        people = orch._person_repo.find_all()
+        negative = [
+            p.person_id
+            for p in people
+            if orch._ledger_repo.balance_of(p.primary_account_id) < 0
+        ]
+        assert negative == []  # balances stay >= 0
+
+    def test_failed_intent_does_not_debit(self, db, config):
+        """A PAYMENT_FAILED inline entry must not move money out of the account."""
+        orch = build_orchestrator(db, seed=7, config=config)
+        orch.initialize(people_count=50, seed=7)
+        orch.run_hours(240)
+
+        failed = orch._ledger_repo.find_failed(limit=1000)
+        for entry in failed:
+            # Failed payments carry an amount for the audit trail, but the
+            # money stays in the person's account (from_account_id is None).
+            assert entry.from_account_id is None
+            assert entry.to_account_id is None

@@ -581,10 +581,17 @@ class Orchestrator:
                 metadata["failure_code"] = failure_code
                 metadata["failure_reason"] = FAILURE_REASONS[failure_code]
                 metadata["failure_category"] = FAILURE_CATEGORIES[failure_code]
+            # A FAILED payment never debits the person's account — the funds are
+            # simply not moved.  Only a SETTLED payment debits.  This keeps
+            # balances from drifting below zero on failed transactions.
+            if status == INTENT_SETTLED:
+                debit_from = debit_account
+            else:
+                debit_from = None  # no money leaves the account on failure
             ledger_entries.append(LedgerEntry(
                 entry_id=uuid4(),
                 event_type=event_type,
-                from_account_id=debit_account,
+                from_account_id=debit_from,
                 to_account_id=None,
                 amount=intent.amount,
                 simulation_timestamp=current_dt,
