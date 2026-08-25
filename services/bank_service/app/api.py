@@ -32,7 +32,7 @@ from pydantic import BaseModel
 
 from .config import Settings
 from .database import Database
-from .domain import BankPolicy, BankState, BankStatus, FailureCode
+from .domain import BankPolicy, BankState, BankStatus, FAILURE_REASONS, FailureCode
 from .repos import BankRepository
 
 logger = logging.getLogger("bank")
@@ -417,16 +417,10 @@ def authorize_payment(
             unknown_outcome=False,
         )
 
-    # Otherwise: bank-side decline (issuer decline, fraud, expired card, etc.)
-    failure_type = FailureCode._weighted_pick(rng)
-    reason_map = {
-        FailureCode.TIMEOUT.value: "Bank did not respond in time",
-        FailureCode.HARD_DECLINE.value: "Bank declined transaction (issuer check)",
-        FailureCode.EXPIRED_CARD.value: "Card has expired",
-        FailureCode.FRAUD_BLOCK.value: "Transaction blocked by fraud detection",
-        FailureCode.NETWORK_ERROR.value: "Network error communicating with bank",
-    }
-    reason = reason_map.get(failure_type, "Declined by bank")
+    # Otherwise: bank-side decline — reason drawn from the calibrated
+    # composition split, with BANK_DEGRADED dominating while the bank is sick.
+    failure_type = FailureCode._weighted_pick(rng, bank.current_state.value)
+    reason = FAILURE_REASONS.get(failure_type, "Declined by bank")
 
     bank_repo.record_transaction_result(
         bank.bank_id, False, sim_ts, response_time_ms, "FAILED",

@@ -7,7 +7,15 @@ from decimal import Decimal
 from random import Random
 from typing import Optional
 
-from .domain import BankPolicy, BankState, FailureCode, PaymentAttempt, PaymentIntent, RecoveryAction
+from .domain import (
+    FAILURE_REASONS,
+    BankPolicy,
+    BankState,
+    FailureCode,
+    PaymentAttempt,
+    PaymentIntent,
+    RecoveryAction,
+)
 from .schema import PaymentAttemptRow
 
 
@@ -75,15 +83,23 @@ class ProbabilityEngine:
         if roll < adjusted_rate:
             return True, None, None
 
-        failure_type = FailureCode._weighted_pick(self._rng)
-        reason_map = {
-            FailureCode.TIMEOUT.value: "Bank did not respond in time",
-            FailureCode.HARD_DECLINE.value: "Bank declined transaction (issuer check)",
-            FailureCode.EXPIRED_CARD.value: "Card has expired",
-            FailureCode.FRAUD_BLOCK.value: "Transaction blocked by fraud detection",
-            FailureCode.NETWORK_ERROR.value: "Network error communicating with bank",
-        }
-        return False, failure_type, reason_map.get(failure_type, "Unknown failure")
+        # Composition-weighted decline (mirrors the bank service's taxonomy).
+        # INSUFFICIENT_FUNDS is owned by the hard funds check, not this roll.
+        failure_types = [
+            (FailureCode.ISSUER_DECLINE.value, 14),
+            (FailureCode.NETWORK_ERROR.value, 12),
+            (FailureCode.TIMEOUT.value, 9),
+            (FailureCode.LIMIT_EXCEEDED.value, 8),
+            (FailureCode.RISK_DECLINE.value, 7),
+            (FailureCode.EXPIRED_PAYMENT_METHOD.value, 5),
+            (FailureCode.AUTHENTICATION_FAILURE.value, 4),
+            (FailureCode.CANCELLED.value, 2),
+            (FailureCode.INVALID_DETAILS.value, 1),
+        ]
+        codes, weights = zip(*failure_types)
+        failure_type = self._rng.choices(codes, weights=weights, k=1)[0]
+        reason = FAILURE_REASONS.get(failure_type, "Unknown failure")
+        return False, failure_type, reason
 
 
 # Re-export default bank factory for api.py convenience

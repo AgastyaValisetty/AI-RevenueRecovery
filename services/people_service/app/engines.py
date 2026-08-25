@@ -291,9 +291,24 @@ class SubscriptionEngine:
         )
         return (amount + gst).quantize(_MONEY, rounding=ROUND_HALF_UP)
 
-    def build_intent(self, subscription: Subscription, on: datetime) -> PaymentIntent:
-        payment_method = self._rng.choice(["UPI", "CARD", "NETBANKING"])
-        # Use the person's payment preference instead of uniform random
+    def _pick_method(self, preferences: dict | None) -> str:
+        """Sample a payment method using the person's stored weighted
+        preferences (UPI-dominated in India), falling back to a sensible
+        default split when no preferences are available."""
+        if preferences:
+            options = ["UPI", "CARD", "NETBANKING"]
+            weights = [
+                max(0.0, float(preferences.get(m, 0.0))) for m in options
+            ]
+            if sum(weights) > 0:
+                return self._rng.choices(options, weights=weights, k=1)[0]
+        # Uniform fallback (matches prior default behaviour)
+        return self._rng.choice(["UPI", "CARD", "NETBANKING"])
+
+    def build_intent(
+        self, subscription: Subscription, on: datetime, preferences: dict | None = None
+    ) -> PaymentIntent:
+        payment_method = self._pick_method(preferences)
         gross_amount = self._apply_gst(subscription.amount)
         return PaymentIntent(
             intent_id=uuid4(),
@@ -309,10 +324,10 @@ class SubscriptionEngine:
         )
 
     def build_intent_from_decision(
-        self, decision: PurchaseDecision, on: datetime
+        self, decision: PurchaseDecision, on: datetime, preferences: dict | None = None
     ) -> PaymentIntent:
         """Build a PaymentIntent from an e-commerce PurchaseDecision."""
-        payment_method = self._rng.choice(["UPI", "CARD", "NETBANKING"])
+        payment_method = self._pick_method(preferences)
         return PaymentIntent(
             intent_id=uuid4(),
             person_id=decision.person_id,

@@ -74,8 +74,11 @@ class BankRow(Base):
     network_error_rate: Mapped[Decimal] = mapped_column(Numeric(6, 2))
     current_state: Mapped[str] = mapped_column(String(32))
     state_multipliers_json: Mapped[dict] = mapped_column(PortableJSON)
-    settlement_account_id: Mapped[PyUUID | None] = mapped_column(
-        UUID(), nullable=True
+    # Settlement accounts are created by the Bank Service and use a
+    # non-UUID id (e.g. "settlement-<hex12>"), so this shared column must be
+    # mapped as a string to match the Bank Service's declaration.
+    settlement_account_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

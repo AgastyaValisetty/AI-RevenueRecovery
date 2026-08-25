@@ -17,6 +17,8 @@ from app.domain import (
     PaymentIntent,
     Person,
     Product,
+    PAYMENT_FAILED,
+    PAYMENT_SETTLED,
     SALARY_DEPOSIT,
     LIVING_COST,
     SETTLED,
@@ -229,6 +231,81 @@ class TestLedgerRepository:
         expected = datetime(2024, 6, 15, 10, 30)
         assert latest is not None
         assert latest.replace(tzinfo=None) == expected or latest == expected.replace(tzinfo=timezone.utc)
+
+    def test_count_by_event_type(self, db):
+        repo = LedgerRepository(db)
+        account_id = uuid4()
+        repo.append(
+            [
+                LedgerEntry(
+                    entry_id=uuid4(),
+                    event_type=PAYMENT_SETTLED,
+                    from_account_id=account_id,
+                    to_account_id=None,
+                    amount=Decimal("100"),
+                    simulation_timestamp=datetime(2024, 1, 1, 9, 0, tzinfo=timezone.utc),
+                ),
+                LedgerEntry(
+                    entry_id=uuid4(),
+                    event_type=PAYMENT_FAILED,
+                    from_account_id=account_id,
+                    to_account_id=None,
+                    amount=Decimal("100"),
+                    simulation_timestamp=datetime(2024, 1, 1, 9, 0, tzinfo=timezone.utc),
+                    metadata_json={"failure_code": "INSUFFICIENT_FUNDS"},
+                ),
+                LedgerEntry(
+                    entry_id=uuid4(),
+                    event_type=PAYMENT_FAILED,
+                    from_account_id=account_id,
+                    to_account_id=None,
+                    amount=Decimal("200"),
+                    simulation_timestamp=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+                    metadata_json={"failure_code": "TIMEOUT"},
+                ),
+            ]
+        )
+        assert repo.count_by_event_type(PAYMENT_SETTLED) == 1
+        assert repo.count_by_event_type(PAYMENT_FAILED) == 2
+        assert repo.count_by_event_type("NOPE") == 0
+
+    def test_find_failed_returns_only_failures_newest_first(self, db):
+        repo = LedgerRepository(db)
+        account_id = uuid4()
+
+        settled = LedgerEntry(
+            entry_id=uuid4(),
+            event_type=PAYMENT_SETTLED,
+            from_account_id=account_id,
+            to_account_id=None,
+            amount=Decimal("100"),
+            simulation_timestamp=datetime(2024, 1, 1, 8, 0, tzinfo=timezone.utc),
+        )
+        old_fail = LedgerEntry(
+            entry_id=uuid4(),
+            event_type=PAYMENT_FAILED,
+            from_account_id=account_id,
+            to_account_id=None,
+            amount=Decimal("50"),
+            simulation_timestamp=datetime(2024, 1, 1, 9, 0, tzinfo=timezone.utc),
+            metadata_json={"failure_code": "INSUFFICIENT_FUNDS"},
+        )
+        new_fail = LedgerEntry(
+            entry_id=uuid4(),
+            event_type=PAYMENT_FAILED,
+            from_account_id=account_id,
+            to_account_id=None,
+            amount=Decimal("80"),
+            simulation_timestamp=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            metadata_json={"failure_code": "NETWORK_ERROR"},
+        )
+        repo.append([settled, old_fail, new_fail])
+
+        failed = repo.find_failed(limit=10)
+        assert len(failed) == 2
+        assert failed[0].metadata_json["failure_code"] == "NETWORK_ERROR"  # newest first
+        assert failed[1].metadata_json["failure_code"] == "INSUFFICIENT_FUNDS"
+        assert all(e.event_type == PAYMENT_FAILED for e in failed)
 
 
 class TestSimulationRunRepository:

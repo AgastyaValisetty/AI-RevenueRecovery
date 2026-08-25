@@ -334,6 +334,81 @@ def process_payment(
     )
 
 
+@router.get("/payments/failures")
+def get_payment_failures(request: Request) -> dict:
+    """Return failure analytics: rate + breakdown by reason + recent failures.
+
+    Counts are derived from ``PAYMENT_FAILED`` / ``PAYMENT_SETTLED`` ledger
+    entries so the failure rate reflects *all* settlement outcomes across every
+    path (inline simulation, process-all fallback, and the LazerPay gateway).
+
+    NOTE: this route MUST be declared before ``/payments/{attempt_id}`` so
+    that ``"failures"`` isn't captured as an attempt id.
+    """
+    from .domain import FAILURE_REASONS, FAILURE_CATEGORIES, PAYMENT_SETTLED, PAYMENT_FAILED
+    from .failure_model import LEGACY_CODE_MAP
+
+    orchestrator = request.app.state.orchestrator
+    failed = orchestrator._ledger_repo.find_failed(limit=500)
+    total_failed = orchestrator._ledger_repo.count_by_event_type(PAYMENT_FAILED)
+    total_settled = orchestrator._ledger_repo.count_by_event_type(PAYMENT_SETTLED)
+
+    def _normalize_code(raw: str | None) -> str:
+        """Map legacy dummy codes onto the new taxonomy (old DB rows)."""
+        code = raw or "UNKNOWN"
+        return LEGACY_CODE_MAP.get(code, code)
+
+    # Aggregate failures by reason (Python-side for DB portability incl. SQLite).
+    by_reason: dict[str, dict] = {}
+    for entry in failed:
+        meta = entry.metadata_json or {}
+        code = _normalize_code(meta.get("failure_code"))
+        reason = meta.get("failure_reason") or FAILURE_REASONS.get(code, "Unknown")
+        category = FAILURE_CATEGORIES.get(code, "UNKNOWN")
+        bucket = by_reason.setdefault(
+            code, {"code": code, "reason": reason, "category": category, "count": 0}
+        )
+        bucket["count"] += 1
+
+    breakdown = sorted(by_reason.values(), key=lambda b: (-b["count"], b["code"]))
+    for bucket in breakdown:
+        bucket["pct_of_failures"] = (
+            round(bucket["count"] / total_failed * 100, 1) if total_failed else 0.0
+        )
+
+    recent = [
+        {
+            "failure_code": _normalize_code((e.metadata_json or {}).get("failure_code")),
+            "failure_reason": (e.metadata_json or {}).get("failure_reason")
+            or FAILURE_REASONS.get(
+                _normalize_code((e.metadata_json or {}).get("failure_code"))
+                or "", "Unknown error"
+            ),
+            "amount": str(e.amount),
+            "person_id": (e.metadata_json or {}).get("person_id"),
+            "merchant_id": (e.metadata_json or {}).get("merchant_id"),
+            "payment_method": (e.metadata_json or {}).get("payment_method"),
+            "event_type": e.event_type,
+            "simulation_timestamp": (
+                e.simulation_timestamp.isoformat() if e.simulation_timestamp else None
+            ),
+            "related_attempt_id": e.related_attempt_id,
+        }
+        for e in failed
+    ]
+
+    denominator = total_settled + total_failed
+    return {
+        "total_failed": total_failed,
+        "total_settled": total_settled,
+        "failure_rate": (
+            round(total_failed / denominator * 100, 2) if denominator else 0.0
+        ),
+        "by_reason": breakdown,
+        "recent_failures": recent,
+    }
+
+
 @router.get("/payments/{attempt_id}")
 def get_payment_attempt(attempt_id: str, request: Request) -> dict:
     """Get status of a payment attempt."""
@@ -524,9 +599,11 @@ def process_all_payments(request: Request) -> dict:
 
     from .config import Settings
     from .domain import (
+        FAILURE_REASONS,
         LedgerEntry, PAYMENT_SETTLED, PAYMENT_FAILED,
         INTENT_SETTLED, INTENT_FAILED, now,
     )
+    from .failure_model import classify_failure, failure_probability
 
     settings: Settings = request.app.state.settings
     lazerpay_url = settings.lazerpay_url
@@ -578,18 +655,29 @@ def process_all_payments(request: Request) -> dict:
 
         if status is None:
             bank = orchestrator._bank_repo.find_by_name("RupeeBank")
+            bank_state = bank.current_state if bank else "NORMAL"
             if person:
                 current_balance = orchestrator._ledger_repo.balance_of(person.primary_account_id)
                 if current_balance < intent.amount:
                     status = INTENT_FAILED
                     failure_code = "INSUFFICIENT_FUNDS"
                 else:
-                    success_rate = float(bank.authorization_success_rate) if bank else 99.1
-                    if orchestrator._rng.random() * 100 < success_rate:
+                    p_fail = failure_probability(
+                        intent.payment_method,
+                        bank_state=bank_state,
+                        amount=float(intent.amount),
+                        balance=float(current_balance),
+                        hour=sim_ts.hour,
+                    )
+                    if orchestrator._rng.random() >= p_fail:
                         status = INTENT_SETTLED
                     else:
                         status = INTENT_FAILED
-                        failure_code = "HARD_DECLINE"
+                        failure_code, _cat = classify_failure(
+                            orchestrator._rng,
+                            method=intent.payment_method,
+                            bank_state=bank_state,
+                        )
             else:
                 status = INTENT_SETTLED
 
@@ -631,7 +719,9 @@ def process_all_payments(request: Request) -> dict:
                 metadata_json={
                     "payment_method": intent.payment_method,
                     "failure_code": failure_code,
-                    "failure_reason": "bank_declined",
+                    "failure_reason": FAILURE_REASONS.get(
+                        failure_code or "", "Unknown gateway error"
+                    ),
                     "correlation_id": correlation_id,
                 },
             ))

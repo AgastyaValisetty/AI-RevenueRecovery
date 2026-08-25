@@ -24,6 +24,8 @@ from uuid import UUID, uuid4
 
 from .domain import (
     Bank,
+    FAILURE_REASONS,
+    FAILURE_CATEGORIES,
     LedgerEntry,
     LIVING_COST,
     ORDER_PURCHASE,
@@ -52,6 +54,7 @@ from .ports import (
     SimulationRunRepository,
     SubscriptionRepository,
 )
+from .failure_model import classify_failure, failure_probability
 from .rng import SimulationRNG
 from .sim_config import SimConfig
 
@@ -419,9 +422,18 @@ class Orchestrator:
         if not subscriptions:
             return
 
+        # Build a person lookup so intents use each person's payment-method
+        # preferences (UPI-dominated) instead of a uniform roll.
+        prefs = {
+            p.person_id: p.payment_preferences_json
+            for p in self._person_repo.find_all()
+        }
+
         # Build intents (GST applied inside SubscriptionEngine.build_intent)
         intents = [
-            self._subscription_engine.build_intent(sub, current_dt)
+            self._subscription_engine.build_intent(
+                sub, current_dt, prefs.get(sub.person_id)
+            )
             for sub in subscriptions
         ]
         self._intent_repo.add(intents)
@@ -470,7 +482,7 @@ class Orchestrator:
             )
             if decision is not None:
                 intent = self._subscription_engine.build_intent_from_decision(
-                    decision, current_dt
+                    decision, current_dt, person.payment_preferences_json
                 )
                 intents.append(intent)
 
@@ -516,6 +528,10 @@ class Orchestrator:
                 p.primary_account_id
             )
 
+        # Bank state feeds P(failure) (degraded/outage banks fail more).
+        bank = self._bank_repo.find_by_name("RupeeBank")
+        bank_state = bank.current_state if bank else "NORMAL"
+
         ledger_entries = []
         updated_intents = []
         for intent in intents:
@@ -527,15 +543,44 @@ class Orchestrator:
                 str(person.primary_account_id) if person else None
             )
 
-            if balance >= intent.amount:
-                status = INTENT_SETTLED
-            else:
+            amount_f = float(intent.amount)
+            balance_f = float(balance)
+
+            failure_code = None
+            if balance < intent.amount:
+                # Real insolvency — deterministic, dominant CUSTOMER_STATE bucket.
                 status = INTENT_FAILED
+                failure_code = "INSUFFICIENT_FUNDS"
+            elif self._rng.random() < failure_probability(
+                intent.payment_method,
+                bank_state=bank_state,
+                amount=amount_f,
+                balance=balance_f,
+                hour=current_dt.hour,
+            ):
+                status = INTENT_FAILED
+                failure_code, _cat = classify_failure(
+                    self._rng, method=intent.payment_method, bank_state=bank_state
+                )
+            else:
+                status = INTENT_SETTLED
 
             updated = replace(intent, status=status)
             updated_intents.append(updated)
 
             event_type = PAYMENT_SETTLED if status == INTENT_SETTLED else PAYMENT_FAILED
+            metadata: dict = {
+                "payment_method": intent.payment_method,
+                "amount": str(intent.amount),
+                "person_id": str(intent.person_id),
+                "merchant_id": str(intent.merchant_id),
+                "settled_inline": True,
+            }
+            # Every inline failure carries its real reason + category.
+            if status == INTENT_FAILED:
+                metadata["failure_code"] = failure_code
+                metadata["failure_reason"] = FAILURE_REASONS[failure_code]
+                metadata["failure_category"] = FAILURE_CATEGORIES[failure_code]
             ledger_entries.append(LedgerEntry(
                 entry_id=uuid4(),
                 event_type=event_type,
@@ -545,13 +590,7 @@ class Orchestrator:
                 simulation_timestamp=current_dt,
                 related_attempt_id=None,
                 related_subscription_id=intent.related_subscription_id,
-                metadata_json={
-                    "payment_method": intent.payment_method,
-                    "amount": str(intent.amount),
-                    "person_id": str(intent.person_id),
-                    "merchant_id": str(intent.merchant_id),
-                    "settled_inline": True,
-                },
+                metadata_json=metadata,
             ))
 
         if updated_intents:

@@ -179,7 +179,7 @@ class TestProbabilityEngine:
         success, code, reason = engine.decide(bank_outage)
         assert success is False
         assert code is not None
-        assert code in [fc.value for fc in FailureCode if fc != FailureCode.INSUFFICIENT_FUNDS and fc != FailureCode.BANK_DEGRADED and fc != FailureCode.BANK_OUTAGE]
+        assert code in [fc.value for fc in FailureCode if fc != FailureCode.INSUFFICIENT_FUNDS and fc != FailureCode.BANK_DEGRADED]
         assert reason is not None
         assert len(reason) > 0
 

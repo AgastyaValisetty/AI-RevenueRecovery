@@ -3,7 +3,7 @@ import random
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from .domain import BankPolicy, BankState, FailureCode
+from .domain import FAILURE_REASONS, BankPolicy, BankState, FailureCode
 
 
 class FundsValidator:
@@ -43,15 +43,9 @@ class ProbabilityEngine:
         if roll < adjusted_rate:
             return True, None, None
 
-        failure_type = FailureCode._weighted_pick(self._rng)
-        reason_map = {
-            FailureCode.TIMEOUT.value: "Bank did not respond in time",
-            FailureCode.HARD_DECLINE.value: "Bank declined transaction (issuer check)",
-            FailureCode.EXPIRED_CARD.value: "Card has expired",
-            FailureCode.FRAUD_BLOCK.value: "Transaction blocked by fraud detection",
-            FailureCode.NETWORK_ERROR.value: "Network error communicating with bank",
-        }
-        return False, failure_type, reason_map.get(failure_type, "Unknown failure")
+        failure_type = FailureCode._weighted_pick(self._rng, bank.current_state.value)
+        reason = FAILURE_REASONS.get(failure_type, "Unknown failure")
+        return False, failure_type, reason
 
 
 class BankStateMachine:

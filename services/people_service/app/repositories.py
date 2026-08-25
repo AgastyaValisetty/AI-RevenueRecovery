@@ -8,6 +8,7 @@ from .database import Database
 from .domain import (
     Bank,
     BankAccount,
+    PAYMENT_FAILED,
     LedgerEntry,
     Merchant,
     PaymentIntent,
@@ -622,6 +623,35 @@ class LedgerRepository:
                 select(func.max(LedgerEntryRow.simulation_timestamp))
             )
             return latest_ts if latest_ts else None
+
+    def count_by_event_type(self, event_type: str) -> int:
+        """Return the number of ledger entries of a given event type."""
+        with self._db.session() as session:
+            return session.scalar(
+                select(func.count())
+                .select_from(LedgerEntryRow)
+                .where(LedgerEntryRow.event_type == event_type)
+            )
+
+    def find_failed(self, limit: int = 200) -> list[LedgerEntry]:
+        """Return the most recent ``PAYMENT_FAILED`` ledger entries, newest first.
+
+        Consumers read the attributed ``failure_code`` / ``failure_reason`` out
+        of ``metadata_json``. Falling back to a code-less---but still
+        identified-as-failed---entry is acceptable; the API layer supplies a
+        generic reason for any missing code.
+        """
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(LedgerEntryRow)
+                .where(LedgerEntryRow.event_type == PAYMENT_FAILED)
+                .order_by(
+                    LedgerEntryRow.simulation_timestamp.desc(),
+                    LedgerEntryRow.created_at.desc(),
+                )
+                .limit(limit)
+            ).all()
+            return [_ledger_from_row(r) for r in rows]
 
     def balance_of(self, account_id: UUID | str) -> Decimal:
         with self._db.session() as session:

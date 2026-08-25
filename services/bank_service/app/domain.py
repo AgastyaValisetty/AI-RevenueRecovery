@@ -33,28 +33,74 @@ class BankState(str, Enum):
 
 
 class FailureCode(str, Enum):
-    """Bank-side failure categories."""
+    """Bank-side failure categories (new real-world taxonomy).
+
+    Old dummy placeholder codes (HARD_DECLINE, EXPIRED_CARD, FRAUD_BLOCK,
+    BANK_OUTAGE) have been removed — only the calibrated taxonomy remains.
+    """
     INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS"
-    TIMEOUT = "TIMEOUT"
+    EXPIRED_PAYMENT_METHOD = "EXPIRED_PAYMENT_METHOD"
+    AUTHENTICATION_FAILURE = "AUTHENTICATION_FAILURE"
+    CANCELLED = "CANCELLED"
+    ISSUER_DECLINE = "ISSUER_DECLINE"
+    LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
+    RISK_DECLINE = "RISK_DECLINE"
     NETWORK_ERROR = "NETWORK_ERROR"
-    HARD_DECLINE = "HARD_DECLINE"
-    EXPIRED_CARD = "EXPIRED_CARD"
-    FRAUD_BLOCK = "FRAUD_BLOCK"
+    TIMEOUT = "TIMEOUT"
     BANK_DEGRADED = "BANK_DEGRADED"
-    BANK_OUTAGE = "BANK_OUTAGE"
+    INVALID_DETAILS = "INVALID_DETAILS"
+    UNSUPPORTED_METHOD = "UNSUPPORTED_METHOD"
 
     @staticmethod
-    def _weighted_pick(rng: Random) -> str:
-        """Pick a failure code weighted by frequency."""
-        failure_types = [
-            (FailureCode.TIMEOUT.value, 0.30),
-            (FailureCode.HARD_DECLINE.value, 0.30),
-            (FailureCode.EXPIRED_CARD.value, 0.20),
-            (FailureCode.FRAUD_BLOCK.value, 0.10),
-            (FailureCode.NETWORK_ERROR.value, 0.10),
+    def _weighted_pick(rng: Random, bank_state: str = "NORMAL") -> str:
+        """Pick a decline code weighted by the user's composition split.
+
+        ``bank_state`` folds weight toward ``BANK_DEGRADED`` while the bank is
+        in a degraded/outage state.
+        """
+        # Base conditional distribution among failures (INSUFFICIENT_FUNDS is
+        # handled by the hard funds check, not here). Weights mirror
+        # people_service.failure_model.COMPOSITION.
+        failure_types: list[tuple[str, float]] = [
+            (FailureCode.ISSUER_DECLINE.value, 14),
+            (FailureCode.NETWORK_ERROR.value, 12),
+            (FailureCode.TIMEOUT.value, 9),
+            (FailureCode.LIMIT_EXCEEDED.value, 8),
+            (FailureCode.RISK_DECLINE.value, 7),
+            (FailureCode.EXPIRED_PAYMENT_METHOD.value, 5),
+            (FailureCode.AUTHENTICATION_FAILURE.value, 4),
+            (FailureCode.INVALID_DETAILS.value, 3),
+            (FailureCode.CANCELLED.value, 2),
+            (FailureCode.UNSUPPORTED_METHOD.value, 1),
         ]
+        if bank_state in ("DEGRADED", "OUTAGE"):
+            # Boil over toward infra/load failure while the bank is sick.
+            total = sum(w for _c, w in failure_types)
+            failure_types = [
+                (FailureCode.BANK_DEGRADED.value, 60.0),
+            ] + [
+                (c, w * 40.0 / total) for c, w in failure_types
+            ]
         values, weights = zip(*failure_types)
         return str(rng.choices(values, weights=weights, k=1)[0])
+
+
+# Human-readable reasons for the new failure taxonomy (mirrors the
+# people_service.failure_model so the dashboard shows one coherent vocabulary).
+FAILURE_REASONS: dict[str, str] = {
+    "INSUFFICIENT_FUNDS": "Insufficient balance",
+    "EXPIRED_PAYMENT_METHOD": "Payment method expired / blocked",
+    "AUTHENTICATION_FAILURE": "Authentication failed (PIN/OTP/3DS)",
+    "CANCELLED": "Customer cancelled / abandoned",
+    "ISSUER_DECLINE": "Temporary decline by issuing bank",
+    "LIMIT_EXCEEDED": "Transaction / daily limit exceeded",
+    "RISK_DECLINE": "Blocked for suspected fraud / risk",
+    "NETWORK_ERROR": "Network / connectivity failure",
+    "TIMEOUT": "Bank response timed out / unknown outcome",
+    "BANK_DEGRADED": "Bank under load / degraded",
+    "INVALID_DETAILS": "Incorrect payment details (CVV/account)",
+    "UNSUPPORTED_METHOD": "Payment method not supported",
+}
 
 
 @dataclass(frozen=True)

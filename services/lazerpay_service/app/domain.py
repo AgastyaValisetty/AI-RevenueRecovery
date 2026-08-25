@@ -34,29 +34,43 @@ class BankState(str, Enum):
 
 
 class FailureCode(str, Enum):
-    """Bank-side failure categories used for recovery reasoning."""
+    """Bank-side failure categories used for recovery reasoning.
+
+    The live gateway passes through the bank service's codes; this enum is the
+    recovery/domain mirror of that taxonomy.  Old dummy codes (HARD_DECLINE,
+    EXPIRED_CARD, FRAUD_BLOCK) have been removed.
+    """
     INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS"
-    TIMEOUT = "TIMEOUT"
-    NETWORK_ERROR = "NETWORK_ERROR"
-    HARD_DECLINE = "HARD_DECLINE"
-    EXPIRED_CARD = "EXPIRED_CARD"
-    FRAUD_BLOCK = "FRAUD_BLOCK"
+    EXPIRED_PAYMENT_METHOD = "EXPIRED_PAYMENT_METHOD"
+    AUTHENTICATION_FAILURE = "AUTHENTICATION_FAILURE"
+    CANCELLED = "CANCELLED"
     ISSUER_DECLINE = "ISSUER_DECLINE"
+    LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
+    RISK_DECLINE = "RISK_DECLINE"
+    NETWORK_ERROR = "NETWORK_ERROR"
+    TIMEOUT = "TIMEOUT"
     BANK_DEGRADED = "BANK_DEGRADED"
+    INVALID_DETAILS = "INVALID_DETAILS"
+    UNSUPPORTED_METHOD = "UNSUPPORTED_METHOD"
     UNKNOWN_OUTCOME = "UNKNOWN_OUTCOME"
 
-    @staticmethod
-    def _weighted_pick(rng) -> str:
-        """Pick a failure code weighted by frequency."""
-        failure_types = [
-            (FailureCode.TIMEOUT.value, 0.30),
-            (FailureCode.HARD_DECLINE.value, 0.30),
-            (FailureCode.EXPIRED_CARD.value, 0.20),
-            (FailureCode.FRAUD_BLOCK.value, 0.10),
-            (FailureCode.NETWORK_ERROR.value, 0.10),
-        ]
-        values, weights = zip(*failure_types)
-        return str(rng.choices(values, weights=weights, k=1)[0])
+
+# Human-readable reasons for the new taxonomy (mirrors bank_service + people_service).
+FAILURE_REASONS: dict[str, str] = {
+    "INSUFFICIENT_FUNDS": "Insufficient balance",
+    "EXPIRED_PAYMENT_METHOD": "Payment method expired / blocked",
+    "AUTHENTICATION_FAILURE": "Authentication failed (PIN/OTP/3DS)",
+    "CANCELLED": "Customer cancelled / abandoned",
+    "ISSUER_DECLINE": "Temporary decline by issuing bank",
+    "LIMIT_EXCEEDED": "Transaction / daily limit exceeded",
+    "RISK_DECLINE": "Blocked for suspected fraud / risk",
+    "NETWORK_ERROR": "Network / connectivity failure",
+    "TIMEOUT": "Bank response timed out / unknown outcome",
+    "BANK_DEGRADED": "Bank under load / degraded",
+    "INVALID_DETAILS": "Incorrect payment details (CVV/account)",
+    "UNSUPPORTED_METHOD": "Payment method not supported",
+    "UNKNOWN_OUTCOME": "Bank response delayed beyond delivery window",
+}
 
 
 @dataclass(frozen=True)

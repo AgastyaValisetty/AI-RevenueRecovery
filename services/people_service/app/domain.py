@@ -4,6 +4,12 @@ from decimal import Decimal
 from enum import Enum
 from uuid import UUID, uuid4
 
+from .failure_model import (
+    FAILURE_REASONS,
+    FAILURE_CATEGORIES,
+    CATEGORY_LABELS,
+)
+
 SALARY_DEPOSIT = "SALARY_DEPOSIT"
 LIVING_COST = "LIVING_COST"
 PAYMENT_SETTLED = "PAYMENT_SETTLED"
@@ -35,6 +41,10 @@ FAILED = "FAILED"
 UPI = "UPI"
 CARD = "CARD"
 NETBANKING = "NETBANKING"
+
+# Human-readable reason + category for every failure code. Single source of
+# truth lives in failure_model.FAILURE_TYPES; FAILURE_REASONS / FAILURE_CATEGORIES
+# (new taxonomy, old dummy codes removed) are re-exported above.
 
 # Simulation run statuses
 STATUS_PENDING = "PENDING"
@@ -97,7 +107,9 @@ class Bank:
     network_error_rate: Decimal
     current_state: str
     state_multipliers_json: dict
-    settlement_account_id: UUID | None = None
+    # Settlement account id is a non-UUID string (e.g. "settlement-<hex12>")
+    # written by the Bank Service — kept as str to match.
+    settlement_account_id: str | None = None
     created_at: datetime = field(default_factory=now)
 
 
