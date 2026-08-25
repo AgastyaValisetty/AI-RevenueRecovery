@@ -1,55 +1,105 @@
 from datetime import date, datetime
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID as PyUUID
 
 from sqlalchemy import (
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
+    JSON,
     Numeric,
     String,
     Text,
+    TypeDecorator,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+# Use a portable JSON type: JSONB for PostgreSQL, JSON for SQLite
+class PortableJSON(TypeDecorator):
+    """JSON type that uses JSONB on PostgreSQL, JSON on SQLite."""
+    impl = JSON
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(JSONB())
+        return dialect.type_descriptor(JSON())
+
+
+class UUID(TypeDecorator):
+    """Universal UUID type — works with both PostgreSQL and SQLite."""
+
+    impl = String
+    cache_ok = True
+
+    def __init__(self, *args, **kwargs):
+        kwargs.pop("as_uuid", None)
+        super().__init__(length=36)
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        return str(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        return PyUUID(value)
+
+
+# --------------------------------------------------------------------------- #
+# Base
+# --------------------------------------------------------------------------- #
 
 class Base(DeclarativeBase):
     pass
 
 
+# --------------------------------------------------------------------------- #
+# Tables
+# --------------------------------------------------------------------------- #
+
 class BankRow(Base):
     __tablename__ = "banks"
 
-    bank_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    bank_id: Mapped[PyUUID] = mapped_column(UUID(), primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True)
     authorization_success_rate: Mapped[Decimal] = mapped_column(Numeric(6, 2))
     timeout_rate: Mapped[Decimal] = mapped_column(Numeric(6, 2))
     issuer_decline_rate: Mapped[Decimal] = mapped_column(Numeric(6, 2))
     network_error_rate: Mapped[Decimal] = mapped_column(Numeric(6, 2))
     current_state: Mapped[str] = mapped_column(String(32))
-    state_multipliers_json: Mapped[dict] = mapped_column(JSONB)
+    state_multipliers_json: Mapped[dict] = mapped_column(PortableJSON)
+    settlement_account_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class PersonRow(Base):
     __tablename__ = "persons"
 
-    person_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    person_id: Mapped[PyUUID] = mapped_column(UUID(), primary_key=True)
     name: Mapped[str] = mapped_column(String(128))
     age: Mapped[int] = mapped_column(Integer)
     salary: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     salary_deposit_day: Mapped[int] = mapped_column(Integer)
+    salary_deposit_hour: Mapped[int] = mapped_column(Integer, default=9)
     spending_profile_category: Mapped[str] = mapped_column(String(64))
-    spending_profile_json: Mapped[dict] = mapped_column(JSONB)
-    payment_preferences_json: Mapped[dict] = mapped_column(JSONB)
-    primary_bank_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("banks.bank_id")
+    spending_profile_json: Mapped[dict] = mapped_column(PortableJSON)
+    payment_preferences_json: Mapped[dict] = mapped_column(PortableJSON)
+    income_bracket: Mapped[str] = mapped_column(String(32))
+    age_group: Mapped[str] = mapped_column(String(32))
+    employment_type: Mapped[str] = mapped_column(String(32))
+    primary_bank_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("banks.bank_id")
     )
-    primary_account_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+    primary_account_id: Mapped[PyUUID] = mapped_column(
+        UUID(),
         ForeignKey(
             "bank_accounts.account_id",
             name="fk_persons_primary_account_id",
@@ -64,17 +114,18 @@ class PersonRow(Base):
 class BankAccountRow(Base):
     __tablename__ = "bank_accounts"
 
-    account_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    person_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+    account_id: Mapped[PyUUID] = mapped_column(UUID(), primary_key=True)
+    person_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(),
         ForeignKey(
             "persons.person_id",
             deferrable=True,
             initially="DEFERRED",
         ),
+        nullable=True,
     )
-    bank_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("banks.bank_id")
+    bank_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("banks.bank_id")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -82,11 +133,11 @@ class BankAccountRow(Base):
 class MerchantRow(Base):
     __tablename__ = "merchants"
 
-    merchant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    merchant_id: Mapped[PyUUID] = mapped_column(UUID(), primary_key=True)
     name: Mapped[str] = mapped_column(String(64))
     merchant_type: Mapped[str] = mapped_column(String(32))
-    settlement_bank_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("banks.bank_id")
+    settlement_bank_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("banks.bank_id")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -94,9 +145,9 @@ class MerchantRow(Base):
 class ProductRow(Base):
     __tablename__ = "products"
 
-    product_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    merchant_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("merchants.merchant_id")
+    product_id: Mapped[PyUUID] = mapped_column(UUID(), primary_key=True)
+    merchant_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("merchants.merchant_id")
     )
     name: Mapped[str] = mapped_column(String(128))
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
@@ -108,15 +159,15 @@ class ProductRow(Base):
 class SubscriptionRow(Base):
     __tablename__ = "subscriptions"
 
-    subscription_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    person_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("persons.person_id")
+    subscription_id: Mapped[PyUUID] = mapped_column(UUID(), primary_key=True)
+    person_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("persons.person_id")
     )
-    merchant_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("merchants.merchant_id")
+    merchant_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("merchants.merchant_id")
     )
-    product_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("products.product_id")
+    product_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("products.product_id")
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     billing_cycle: Mapped[str] = mapped_column(String(16))
@@ -135,21 +186,21 @@ class SubscriptionRow(Base):
 class PaymentIntentRow(Base):
     __tablename__ = "payment_intents"
 
-    intent_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    person_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("persons.person_id")
+    intent_id: Mapped[PyUUID] = mapped_column(UUID(), primary_key=True)
+    person_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("persons.person_id")
     )
-    merchant_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("merchants.merchant_id")
+    merchant_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("merchants.merchant_id")
     )
-    product_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("products.product_id")
+    product_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("products.product_id")
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     payment_method: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32))
-    related_subscription_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("subscriptions.subscription_id"), nullable=True
+    related_subscription_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(), ForeignKey("subscriptions.subscription_id"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -159,29 +210,35 @@ class PaymentAttemptRow(Base):
     __tablename__ = "payment_attempts"
 
     attempt_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    intent_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("payment_intents.intent_id")
+    intent_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("payment_intents.intent_id")
     )
-    attempt_number: Mapped[int] = mapped_column(Integer)
-    person_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("persons.person_id")
+    attempt_number: Mapped[int] = mapped_column(Integer, default=1)
+    person_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("persons.person_id")
     )
-    merchant_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("merchants.merchant_id")
+    merchant_id: Mapped[PyUUID] = mapped_column(
+        UUID(), ForeignKey("merchants.merchant_id")
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     payment_method: Mapped[str] = mapped_column(String(32))
-    source_account_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("bank_accounts.account_id"), nullable=True
+    source_account_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(), ForeignKey("bank_accounts.account_id"), nullable=True
     )
-    destination_account_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("bank_accounts.account_id"), nullable=True
+    destination_account_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(), ForeignKey("bank_accounts.account_id"), nullable=True
     )
+    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(32))
-    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True)
+    related_attempt_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("payment_attempts.attempt_id"), nullable=True
+    )
     initiated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    routed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     authorized_at: Mapped[datetime | None] = mapped_column(
@@ -190,9 +247,21 @@ class PaymentAttemptRow(Base):
     settled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    unknown_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     bank_response_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    gateway_processing_time_ms: Mapped[int | None] = mapped_column(
-        Integer, nullable=True
+    gateway_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bank_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    simulation_timestamp: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    correlation_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    retry_for_attempt_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("payment_attempts.attempt_id"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -200,32 +269,32 @@ class PaymentAttemptRow(Base):
 class LedgerEntryRow(Base):
     __tablename__ = "ledger_entries"
 
-    entry_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    entry_id: Mapped[PyUUID] = mapped_column(UUID(), primary_key=True)
     event_type: Mapped[str] = mapped_column(String(32))
-    from_account_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("bank_accounts.account_id"), nullable=True
+    from_account_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
     )
-    to_account_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("bank_accounts.account_id"), nullable=True
+    to_account_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     related_attempt_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("payment_attempts.attempt_id"), nullable=True
     )
-    related_subscription_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
+    related_subscription_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(),
         ForeignKey("subscriptions.subscription_id"),
         nullable=True,
     )
     simulation_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    metadata_json: Mapped[dict] = mapped_column(PortableJSON, default=dict)
 
 
 class RecoveryActionRow(Base):
     __tablename__ = "recovery_actions"
 
-    action_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    action_id: Mapped[PyUUID] = mapped_column(UUID(), primary_key=True)
     related_attempt_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("payment_attempts.attempt_id")
     )
@@ -245,6 +314,26 @@ class RecoveryActionRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class SimulationRunRow(Base):
+    """Record of a single simulation execution."""
+    __tablename__ = "simulation_runs"
+
+    run_id: Mapped[PyUUID] = mapped_column(UUID(), primary_key=True)
+    seed: Mapped[int] = mapped_column(Integer)
+    config_snapshot: Mapped[dict] = mapped_column(PortableJSON)
+    people_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hours_run: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32))
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 Index("ix_subscriptions_next_billing_date", SubscriptionRow.next_billing_date)
 Index("ix_payment_intents_status", PaymentIntentRow.status)
 Index("ix_payment_attempts_status", PaymentAttemptRow.status)
@@ -253,5 +342,3 @@ Index("ix_ledger_entries_event_type", LedgerEntryRow.event_type)
 Index("ix_ledger_entries_simulation_timestamp", LedgerEntryRow.simulation_timestamp)
 Index("ix_ledger_entries_from_account_id", LedgerEntryRow.from_account_id)
 Index("ix_ledger_entries_to_account_id", LedgerEntryRow.to_account_id)
-
-

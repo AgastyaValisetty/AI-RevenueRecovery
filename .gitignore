@@ -2,6 +2,7 @@
 Architecture.md
 architecture2.md
 UML_Design.md
+snapshot_v1.md
 *.puml
 *.pu
 skills-lock.json
@@ -9,3 +10,4 @@ Skill.md
 dummy-front-end/
 dummy-frontend-2/
 node_modules/
+#docker-compose up -d postgres

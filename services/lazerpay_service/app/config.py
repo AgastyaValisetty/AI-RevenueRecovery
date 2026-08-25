@@ -14,6 +14,7 @@ class Settings:
     db_name: str
     bank_url: str
     service_port: int
+    http_timeout_seconds: float = 10.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -25,6 +26,7 @@ class Settings:
             db_name=os.getenv("DB_NAME", "revenue_recovery"),
             bank_url=os.getenv("BANK_URL", "http://localhost:8002"),
             service_port=int(os.getenv("LAZERPAY_PORT", "8001")),
+            http_timeout_seconds=float(os.getenv("HTTP_TIMEOUT_SECONDS", "10")),
         )
 
     @property

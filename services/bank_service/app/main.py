@@ -1,3 +1,4 @@
+"""Bank Service application entry point."""
 from fastapi import FastAPI
 
 from .api import router
@@ -10,8 +11,9 @@ def create_app() -> FastAPI:
     db = Database(settings)
     db.create_schema()
 
-    app = FastAPI(title="Bank Service", version="0.1.0")
+    app = FastAPI(title="Bank Service", version="1.0.0")
     app.state.db = db
+    app.state.settings = settings
     app.include_router(router)
     return app
 

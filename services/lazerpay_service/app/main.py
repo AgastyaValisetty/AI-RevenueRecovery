@@ -10,8 +10,9 @@ def create_app() -> FastAPI:
     db = Database(settings)
     db.create_schema()
 
-    app = FastAPI(title="LazerPay Service", version="0.1.0")
+    app = FastAPI(title="LazerPay Service", version="1.0.0")
     app.state.db = db
+    app.state.settings = settings
     app.include_router(router)
     return app
 

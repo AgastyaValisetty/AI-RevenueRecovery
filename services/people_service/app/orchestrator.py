@@ -1,10 +1,47 @@
-import random as _random
-from dataclasses import replace
+"""Orchestrator — drives the synthetic financial simulation on an hourly clock.
+
+The simulation clock operates at hourly granularity.  Each call to
+:meth:`Orchestrator.run_hours` advances the clock by one hour and dispatches
+phase logic keyed on the hour-of-day:
+
+- **09:00** on salary days → deposit salaries (minus 30% income tax)
+- **12:00** daily → apply living costs (spending, +18% GST)
+- **10:00** on billing dates → bill due subscriptions → create + settle PaymentIntents
+- **10–20** business hours → e-commerce shopping decisions → create + settle PaymentIntents
+
+Payment intents are settled inline during the simulation (balance-aware).  If
+the person's account balance covers the amount the intent is ``SETTLED``;
+otherwise it ``FAILED``.  This keeps the simulation self-contained — revenue
+flows to merchants and money circulates through the ledger.
+"""
+
+from __future__ import annotations
+
+import logging
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from .domain import Bank, LedgerEntry, PAYMENT_FAILED, PAYMENT_SETTLED, SETTLED, FAILED, now
+from .domain import (
+    Bank,
+    LedgerEntry,
+    LIVING_COST,
+    ORDER_PURCHASE,
+    PAYMENT_SETTLED,
+    PAYMENT_FAILED,
+    PENDING,
+    SALARY_DEPOSIT,
+    SETTLED,
+    FAILED,
+    INTENT_SETTLED,
+    INTENT_FAILED,
+    PaymentIntent,
+    SimulationRun,
+    STATUS_RUNNING,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    now,
+)
 from .ports import (
     BankRepository,
     LedgerRepository,
@@ -12,38 +49,83 @@ from .ports import (
     PaymentIntentRepository,
     PersonRepository,
     ProductRepository,
+    SimulationRunRepository,
     SubscriptionRepository,
 )
+from .rng import SimulationRNG
+from .sim_config import SimConfig
 
-SIMULATION_START = date(2024, 1, 1)
+logger = logging.getLogger(__name__)
+
+SIMULATION_START = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 
 class SimulationClock:
-    def __init__(self, start_date: date = SIMULATION_START):
-        self._start = start_date
-        self._current_day_index = 0
+    """Hourly-granularity simulation clock.
 
-    def sync_to_date(self, latest_date: date) -> None:
-        if latest_date and latest_date >= self._start:
-            days = (latest_date - self._start).days
-            if days > self._current_day_index:
-                self._current_day_index = days
+    Wraps a virtual start datetime and an hour counter.  All time advances
+    happen in 1-hour increments via :meth:`advance`.
+    """
 
+    def __init__(self, start_datetime: datetime | None = None):
+        self._start = start_datetime or SIMULATION_START
+        self._current_hour_index: int = 0
+
+    def sync_to_timestamp(self, latest_timestamp: datetime | None) -> None:
+        """Jump the clock forward to match the latest ledger entry timestamp."""
+        if latest_timestamp is None:
+            return
+        # SQLite may return naive datetimes (no tzinfo); normalize to UTC-aware
+        if latest_timestamp.tzinfo is None:
+            latest_timestamp = latest_timestamp.replace(tzinfo=timezone.utc)
+        if latest_timestamp >= self._start:
+            hours = int(
+                (latest_timestamp - self._start).total_seconds() // 3600
+            )
+            if hours > self._current_hour_index:
+                self._current_hour_index = hours
+
+    @property
+    def current_datetime(self) -> datetime:
+        return self._start + timedelta(hours=self._current_hour_index)
+
+    @property
     def current_date(self) -> date:
-        return self._start + timedelta(days=self._current_day_index)
+        return self.current_datetime.date()
 
-    def current_day(self) -> int:
-        return self._current_day_index
+    @property
+    def current_hour(self) -> int:
+        return self._current_hour_index
 
-    def date_for(self, day_index: int) -> date:
-        return self._start + timedelta(days=day_index)
+    @property
+    def current_hour_of_day(self) -> int:
+        return self._current_hour_index % 24
 
-    def advance(self) -> date:
-        self._current_day_index += 1
-        return self.current_date()
+    @property
+    def current_day_index(self) -> int:
+        return self._current_hour_index // 24
+
+    @property
+    def day_of_week(self) -> int:
+        """0 = Monday, 6 = Sunday."""
+        return self.current_datetime.weekday()
+
+    @property
+    def is_weekend(self) -> bool:
+        return self.day_of_week >= 5
+
+    def date_for_hour(self, hour_index: int) -> date:
+        return (self._start + timedelta(hours=hour_index)).date()
+
+    def advance(self) -> datetime:
+        """Advance the clock by one hour. Returns the new datetime."""
+        self._current_hour_index += 1
+        return self.current_datetime
 
 
 class Orchestrator:
+    """Coordinates simulation phases across all repositories and engines."""
+
     def __init__(
         self,
         *,
@@ -61,6 +143,10 @@ class Orchestrator:
         spending_engine,
         subscription_engine,
         clock: SimulationClock,
+        ecommerce_engine=None,
+        rng: SimulationRNG | None = None,
+        sim_config: SimConfig | None = None,
+        sim_run_repo: SimulationRunRepository | None = None,
     ) -> None:
         self._bank_repo = bank_repo
         self._person_repo = person_repo
@@ -75,14 +161,27 @@ class Orchestrator:
         self._salary_engine = salary_engine
         self._spending_engine = spending_engine
         self._subscription_engine = subscription_engine
+        self._ecommerce_engine = ecommerce_engine
         self._clock = clock
+        self._rng = rng or SimulationRNG(42)
+        self._config = sim_config
+        self._sim_run_repo = sim_run_repo
+        self._current_run: SimulationRun | None = None
 
-    def _sync_clock(self) -> None:
-        latest = self._ledger_repo.latest_simulation_date()
-        if latest:
-            self._clock.sync_to_date(latest)
+    # ------------------------------------------------------------------
+    # Initialization
+    # ------------------------------------------------------------------
 
-    def initialize(self, people_count: int) -> None:
+    def initialize(self, people_count: int, seed: int | None = None) -> UUID | None:
+        """Initialize simulation data (bank, merchants, people, subscriptions).
+
+        If ``seed`` is provided, a new ``SimulationRNG`` is created with that
+        seed.  A ``SimulationRun`` record is created if a run repository is
+        available.  Returns the run_id (or None if no run repo).
+        """
+        if seed is not None:
+            self._rng = SimulationRNG(seed)
+
         bank = self._bank_repo.find_by_name("RupeeBank")
         if bank is None:
             bank = self._bank_repo.add(self._rupeebank())
@@ -100,30 +199,132 @@ class Orchestrator:
             subscriptions = self._subscription_generator.generate(
                 people,
                 self._product_repo.subscription_products(),
-                self._clock.date_for(0),
+                self._clock.current_date,
             )
             self._subscription_repo.add(subscriptions)
 
-    def run_days(self, days: int) -> None:
+        # Create a SimulationRun record for traceability
+        run_id = None
+        if self._sim_run_repo is not None:
+            config_snapshot = (
+                {"version": self._config.version} if self._config else {}
+            )
+            run = SimulationRun(
+                run_id=uuid4(),
+                seed=self._rng.seed or 42,
+                config_snapshot=config_snapshot,
+                people_count=people_count,
+                status=STATUS_RUNNING,
+                started_at=now(),
+            )
+            self._sim_run_repo.create(run)
+            self._current_run = run
+            run_id = run.run_id
+
+        return run_id
+
+    # ------------------------------------------------------------------
+    # Main loop — hourly
+    # ------------------------------------------------------------------
+
+    def run_hours(self, hours: int) -> None:
+        """Run the simulation forward by ``hours`` hours.
+
+        Each hour advances the clock and dispatches phase logic based on
+        the hour-of-day and date.  Payment intents created during subscription
+        billing or e-commerce phases are settled inline immediately.
+
+        - Hour 09 → salary deposit (minus 30% income tax)
+        - Hour 12 → living costs (spending, +18% GST) for all people
+        - Hour 10 → subscription billing (on due dates) → create + settle intents
+        - Hours 10–20 → e-commerce shopping decisions → create + settle intents
+        """
         self._sync_clock()
-        for _ in range(days):
-            self._clock.advance()
-            on_date = self._clock.current_date()
-            self._deposit_salaries(on_date)
-            self._apply_living_costs(on_date)
-            self._bill_due_subscriptions(on_date)
+
+        if self._current_run is not None and self._sim_run_repo is not None:
+            self._sim_run_repo.update_status(
+                self._current_run.run_id, STATUS_RUNNING
+            )
+
+        try:
+            for _ in range(hours):
+                current_dt = self._clock.advance()
+                on_date = current_dt.date()
+                day_type = "weekend" if self._clock.is_weekend else "weekday"
+
+                # Phase: salary deposit at 09:00 on deposit day
+                if current_dt.hour == 9:
+                    self._deposit_salaries(on_date, current_dt)
+
+                # Phase: living costs at 12:00 daily
+                if current_dt.hour == 12:
+                    self._apply_living_costs(on_date, current_dt, day_type)
+
+                # Phase: subscription billing at 10:00 on due dates
+                if current_dt.hour == 10:
+                    self._bill_due_subscriptions(on_date, current_dt)
+
+                # Phase: e-commerce purchases during business hours (10-20)
+                if 10 <= current_dt.hour <= 20:
+                    self._generate_ecommerce_purchases(current_dt, day_type)
+
+            # Update run status to COMPLETED
+            if self._current_run is not None and self._sim_run_repo is not None:
+                self._sim_run_repo.update_status(
+                    self._current_run.run_id,
+                    STATUS_COMPLETED,
+                    hours_run=self._clock.current_hour,
+                )
+                self._current_run = None
+
+        except Exception as exc:
+            logger.exception("Simulation failed")
+            if self._current_run is not None and self._sim_run_repo is not None:
+                self._sim_run_repo.update_status(
+                    self._current_run.run_id,
+                    STATUS_FAILED,
+                    error_message=str(exc),
+                    hours_run=self._clock.current_hour,
+                )
+            raise
+
+    # Backward compatibility — converts days to hours
+    def run_days(self, days: int) -> None:
+        self.run_hours(days * 24)
+
+    # ------------------------------------------------------------------
+    # Summary and queries
+    # ------------------------------------------------------------------
+
+    def _sync_clock(self) -> None:
+        latest = self._ledger_repo.latest_simulation_timestamp()
+        if latest:
+            self._clock.sync_to_timestamp(latest)
 
     def summary(self) -> dict:
         self._sync_clock()
-        return {
-            "current_day": self._clock.current_day(),
-            "current_date": str(self._clock.current_date()),
+        result = {
+            "current_day": self._clock.current_day_index,
+            "current_date": str(self._clock.current_date),
+            "current_hour": self._clock.current_hour,
+            "current_datetime": self._clock.current_datetime.isoformat(),
             "people": self._person_repo.count(),
             "merchants": self._merchant_repo.count(),
             "subscriptions": self._subscription_repo.count(),
             "payment_intents": self._intent_repo.count(),
             "ledger_entries": self._ledger_repo.count(),
         }
+        if self._current_run is not None:
+            result["latest_run_id"] = str(self._current_run.run_id)
+            result["latest_run_seed"] = self._current_run.seed
+            result["latest_run_status"] = self._current_run.status
+        elif self._sim_run_repo is not None:
+            latest = self._sim_run_repo.find_latest()
+            if latest:
+                result["latest_run_id"] = str(latest.run_id)
+                result["latest_run_seed"] = latest.seed
+                result["latest_run_status"] = latest.status
+        return result
 
     def balance_of(self, account_id) -> Decimal:
         return self._ledger_repo.balance_of(account_id)
@@ -146,9 +347,6 @@ class Orchestrator:
     def monthly_revenue_for_merchant(self, merchant_id) -> list:
         return self._intent_repo.monthly_revenue(merchant_id)
 
-    def balance_of_all(self, account_ids: list) -> dict:
-        return self._ledger_repo.balances_for_accounts(account_ids)
-
     def person_by_id(self, person_id):
         return self._person_repo.find_by_id(person_id)
 
@@ -167,121 +365,231 @@ class Orchestrator:
     def payment_intents(self, limit: int = 500) -> list:
         return self._intent_repo.find_all(limit=limit)
 
-    def _deposit_salaries(self, on_date: date) -> None:
+    # ------------------------------------------------------------------
+    # Phase implementations
+    # ------------------------------------------------------------------
+
+    def _deposit_salaries(self, on_date: date, current_dt: datetime) -> None:
+        """Deposit salaries (net of income tax) for people whose deposit day matches.
+
+        Delegates to :class:`~engines.SalaryEngine` which returns both the
+        net salary deposit (70% after 30% tax) and a separate ``INCOME_TAX``
+        ledger entry for the deducted tax.
+        """
         people = self._person_repo.find_all()
-        timestamp = self._at_time(on_date, 9)
-        deposits = self._salary_engine.deposit_for(people, on_date.day, timestamp)
+        deposits = self._salary_engine.deposit_for(people, on_date.day, current_dt)
         if deposits:
             self._ledger_repo.append(deposits)
 
-    def _apply_living_costs(self, on_date: date) -> None:
-        people = self._person_repo.find_all()
-        timestamp = self._at_time(on_date, 12)
-        day_type = "weekend" if on_date.weekday() >= 5 else "weekday"
-        entries = [
-            self._spending_engine.daily_cost(person, timestamp, day_type)
-            for person in people
-        ]
-        self._ledger_repo.append(entries)
+    def _apply_living_costs(
+        self, on_date: date, current_dt: datetime, day_type: str
+    ) -> None:
+        """Apply daily living costs for all people (one entry per person per day).
 
-    def _bill_due_subscriptions(self, on_date: date) -> None:
+        The SpendingEngine computes a conditional spend amount that depends on:
+        - person's income bracket, age group, spending profile
+        - time of day, day type (weekday/weekend)
+        - current balance (balance-aware scaling)
+        """
+        people = self._person_repo.find_all()
+        account_ids = [p.primary_account_id for p in people]
+        balances = self._ledger_repo.balances_for_accounts(account_ids)
+
+        entries = []
+        for person in people:
+            balance = balances.get(person.primary_account_id, Decimal("0"))
+            entry = self._spending_engine.daily_cost(
+                person, current_dt, day_type, current_balance=balance
+            )
+            if entry is not None:
+                entries.append(entry)
+        if entries:
+            self._ledger_repo.append(entries)
+
+    def _bill_due_subscriptions(self, on_date: date, current_dt: datetime) -> None:
+        """Create and settle PaymentIntents for due subscriptions.
+
+        GST (18%) is applied to each subscription amount by the
+        :class:`~engines.SubscriptionEngine`.  Intents are settled inline
+        — if the person has sufficient balance the intent is ``SETTLED``,
+        otherwise it ``FAILED``.  Subscriptions that fail consecutively
+        are cancelled.
+        """
         subscriptions = self._subscription_repo.find_due_on(on_date)
         if not subscriptions:
             return
-        timestamp = self._at_time(on_date, 10)
+
+        # Build intents (GST applied inside SubscriptionEngine.build_intent)
         intents = [
-            self._subscription_engine.build_intent(subscription, timestamp)
-            for subscription in subscriptions
+            self._subscription_engine.build_intent(sub, current_dt)
+            for sub in subscriptions
         ]
         self._intent_repo.add(intents)
 
-        # Build a person_id → primary_account_id lookup so we can debit the
-        # correct bank account in the ledger entries.
-        all_people = self._person_repo.find_all()
-        account_lookup = {p.person_id: p.primary_account_id for p in all_people}
-
-        # Settle each intent inline and create ledger entries so that
-        # subscription payments appear in the ledger and affect balances.
-        rng = self._spending_engine._rng
-        ledger_entries = []
-        updated_intents = []
-        for intent, sub in zip(intents, subscriptions):
-            status, attempt = self._decide_settlement(intent, sub, rng)
-            updated = replace(intent, status=status)
-            updated_intents.append(updated)
-
-            if status == SETTLED:
-                # Person pays the subscription amount — DEBIT from person's account
-                account_id = account_lookup.get(sub.person_id)
-                ledger_entries.append(LedgerEntry(
-                    entry_id=uuid4(),
-                    event_type=PAYMENT_SETTLED,
-                    from_account_id=account_id,
-                    to_account_id=None,
-                    amount=intent.amount,
-                    simulation_timestamp=timestamp,
-                    related_attempt_id=None,
-                    related_subscription_id=sub.subscription_id,
-                    metadata_json={
-                        "payment_method": intent.payment_method,
-                        "amount": str(intent.amount),
-                    },
-                ))
-            else:
-                ledger_entries.append(LedgerEntry(
-                    entry_id=uuid4(),
-                    event_type=PAYMENT_FAILED,
-                    from_account_id=None,
-                    to_account_id=None,
-                    amount=intent.amount,
-                    simulation_timestamp=timestamp,
-                    related_attempt_id=None,
-                    related_subscription_id=sub.subscription_id,
-                    metadata_json={
-                        "payment_method": intent.payment_method,
-                        "failure_reason": "insufficient_funds" if status == FAILED else "bank_declined",
-                    },
-                ))
-
-        if ledger_entries:
-            self._ledger_repo.append(ledger_entries)
-        for updated in updated_intents:
-            self._intent_repo.save(updated)
-        # Update subscription billing dates
+        # Advance billing dates for all due subscriptions (monthly cycle)
         self._subscription_repo.advance_billing_date(
             [s.subscription_id for s in subscriptions], days=30
         )
 
-    def _decide_settlement(self, intent, subscription, rng):
-        """Decide whether a payment intent settles or fails.
+        # Settle inline
+        self._settle_payment_intents(intents, current_dt)
 
-        Returns (status, attempt_id) where status is SETTLED or FAILED.
+        # Cancel subscriptions that just failed
+        self._cancel_failed_subscriptions(intents)
+
+    def _generate_ecommerce_purchases(
+        self, current_dt: datetime, day_type: str
+    ) -> None:
+        """Generate and settle e-commerce purchase PaymentIntents.
+
+        During business hours the EcommerceEngine decides whether each person
+        shops.  The PurchaseDecision amount already includes 18% GST (applied
+        in the engine).  Intents are settled inline immediately.
         """
-        bank = self._bank_repo.find_by_name("RupeeBank")
-        person = self._person_repo.find_by_id(subscription.person_id)
+        if self._ecommerce_engine is None:
+            return
 
-        # Check sufficient funds
-        if person:
-            current_balance = self._ledger_repo.balance_of(person.primary_account_id)
-            if current_balance < intent.amount:
-                return FAILED, f"ATT_{str(intent.intent_id)}_{1}"
+        people = self._person_repo.find_all()
+        merchants = self._merchant_repo.find_all()
+        products = self._product_repo.find_all_products()
+        account_ids = [p.primary_account_id for p in people]
+        balances = self._ledger_repo.balances_for_accounts(account_ids)
 
-        # Probabilistic bank decision based on authorization_success_rate
-        success_rate = float(bank.authorization_success_rate) if bank else 99.1
-        state_multipliers = bank.state_multipliers_json if bank else {"NORMAL": 1.0}
-        multiplier = state_multipliers.get(bank.current_state, 1.0) if bank else 1.0
-        effective_success_rate = max(0, success_rate - (multiplier - 1.0) * 5.0)
+        is_salary_day = self._is_salary_day(current_dt.date())
 
-        if rng.random() * 100 < effective_success_rate:
-            return SETTLED, f"ATT_{str(intent.intent_id)}_{1}"
-        else:
-            return FAILED, f"ATT_{str(intent.intent_id)}_{1}"
+        intents = []
+        for person in people:
+            balance = balances.get(person.primary_account_id, Decimal("0"))
+            decision = self._ecommerce_engine.generate_purchase(
+                person,
+                merchants,
+                products,
+                current_dt,
+                balance,
+                is_salary_day,
+            )
+            if decision is not None:
+                intent = self._subscription_engine.build_intent_from_decision(
+                    decision, current_dt
+                )
+                intents.append(intent)
 
-    @staticmethod
-    def _at_time(on_date: date, hour: int) -> datetime:
-        return datetime(
-            on_date.year, on_date.month, on_date.day, hour, tzinfo=timezone.utc
-        )
+        if intents:
+            self._intent_repo.add(intents)
+            # Settle inline — money debits the person's account immediately
+            self._settle_payment_intents(intents, current_dt)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _is_salary_day(self, on_date: date) -> bool:
+        """Check if any person has a salary deposit on this date."""
+        people = self._person_repo.find_all()
+        return any(p.salary_deposit_day == on_date.day for p in people)
+
+    def _settle_payment_intents(
+        self, intents: list[PaymentIntent], current_dt: datetime
+    ) -> None:
+        """Settle payment intents inline during the simulation.
+
+        For each intent:
+        - If the person's balance >= intent amount → ``SETTLED``
+          (debit the person's account, record a ``PAYMENT_SETTLED`` ledger
+          entry).  The credit side goes to ``to_account_id=None`` — money
+          leaves the simulation's circulating pool and enters the merchant's
+          settlement account via the Bank Service in a real deployment.
+        - If the balance is insufficient → ``FAILED``
+          (record a ``PAYMENT_FAILED`` ledger entry, debit the amount
+          regardless to accurately reflect the attempted deduction).
+
+        Updated intents are persisted so revenue queries see ``SETTLED``
+        intents.
+        """
+        from dataclasses import replace
+
+        account_ids = [intent.person_id for intent in intents]
+        people = self._person_repo.find_all()
+        balance_map = {}
+        for p in people:
+            balance_map[p.person_id] = self._ledger_repo.balance_of(
+                p.primary_account_id
+            )
+
+        ledger_entries = []
+        updated_intents = []
+        for intent in intents:
+            balance = balance_map.get(intent.person_id, Decimal("0"))
+            person = next(
+                (p for p in people if p.person_id == intent.person_id), None
+            )
+            debit_account = (
+                str(person.primary_account_id) if person else None
+            )
+
+            if balance >= intent.amount:
+                status = INTENT_SETTLED
+            else:
+                status = INTENT_FAILED
+
+            updated = replace(intent, status=status)
+            updated_intents.append(updated)
+
+            event_type = PAYMENT_SETTLED if status == INTENT_SETTLED else PAYMENT_FAILED
+            ledger_entries.append(LedgerEntry(
+                entry_id=uuid4(),
+                event_type=event_type,
+                from_account_id=debit_account,
+                to_account_id=None,
+                amount=intent.amount,
+                simulation_timestamp=current_dt,
+                related_attempt_id=None,
+                related_subscription_id=intent.related_subscription_id,
+                metadata_json={
+                    "payment_method": intent.payment_method,
+                    "amount": str(intent.amount),
+                    "person_id": str(intent.person_id),
+                    "merchant_id": str(intent.merchant_id),
+                    "settled_inline": True,
+                },
+            ))
+
+        if updated_intents:
+            for ui in updated_intents:
+                self._intent_repo.save(ui)
+        if ledger_entries:
+            self._ledger_repo.append(ledger_entries)
+
+    def _cancel_failed_subscriptions(
+        self, intents: list[PaymentIntent]
+    ) -> None:
+        """Increment failure count / cancel subscriptions linked to failed intents.
+
+        If a subscription's payment intent failed and it hits the failure
+        threshold, its status is set to ``CANCELLED``.
+        """
+        from dataclasses import replace
+
+        failed_sub_ids = [
+            i.related_subscription_id
+            for i in intents
+            if i.status == INTENT_FAILED and i.related_subscription_id is not None
+        ]
+        if not failed_sub_ids:
+            return
+        for sub_id in failed_sub_ids:
+            sub = self._subscription_repo.find(sub_id)
+            if sub is None or sub.status != "ACTIVE":
+                continue
+            new_failures = sub.consecutive_failures + 1
+            new_status = "CANCELLED" if new_failures >= 3 else sub.status
+            updated = replace(
+                sub,
+                consecutive_failures=new_failures,
+                status=new_status,
+                cancelled_at=now() if new_status == "CANCELLED" else sub.cancelled_at,
+            )
+            self._subscription_repo.save(updated)
 
     @staticmethod
     def _rupeebank() -> Bank:

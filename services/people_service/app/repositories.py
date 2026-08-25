@@ -1,8 +1,8 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import extract, func, select
 
 from .database import Database
 from .domain import (
@@ -13,6 +13,7 @@ from .domain import (
     PaymentIntent,
     Person,
     Product,
+    SimulationRun,
     Subscription,
 )
 from .schema import (
@@ -23,6 +24,7 @@ from .schema import (
     PaymentIntentRow,
     PersonRow,
     ProductRow,
+    SimulationRunRow,
     SubscriptionRow,
 )
 
@@ -37,6 +39,7 @@ def _bank_to_row(bank: Bank) -> BankRow:
         network_error_rate=bank.network_error_rate,
         current_state=bank.current_state,
         state_multipliers_json=bank.state_multipliers_json,
+        settlement_account_id=bank.settlement_account_id,
         created_at=bank.created_at,
     )
 
@@ -51,6 +54,7 @@ def _bank_from_row(row: BankRow) -> Bank:
         network_error_rate=row.network_error_rate,
         current_state=row.current_state,
         state_multipliers_json=row.state_multipliers_json,
+        settlement_account_id=row.settlement_account_id,
         created_at=row.created_at,
     )
 
@@ -62,9 +66,13 @@ def _person_to_row(person: Person) -> PersonRow:
         age=person.age,
         salary=person.salary,
         salary_deposit_day=person.salary_deposit_day,
+        salary_deposit_hour=getattr(person, "salary_deposit_hour", 9),
         spending_profile_category=person.spending_profile_category,
         spending_profile_json=person.spending_profile_json,
         payment_preferences_json=person.payment_preferences_json,
+        income_bracket=getattr(person, "income_bracket", "middle"),
+        age_group=getattr(person, "age_group", "35-44"),
+        employment_type=getattr(person, "employment_type", "salaried"),
         primary_bank_id=person.primary_bank_id,
         primary_account_id=person.primary_account_id,
         created_at=person.created_at,
@@ -78,9 +86,13 @@ def _person_from_row(row: PersonRow) -> Person:
         age=row.age,
         salary=row.salary,
         salary_deposit_day=row.salary_deposit_day,
+        salary_deposit_hour=getattr(row, "salary_deposit_hour", 9),
         spending_profile_category=row.spending_profile_category,
         spending_profile_json=row.spending_profile_json,
         payment_preferences_json=row.payment_preferences_json,
+        income_bracket=getattr(row, "income_bracket", "middle"),
+        age_group=getattr(row, "age_group", "35-44"),
+        employment_type=getattr(row, "employment_type", "salaried"),
         primary_bank_id=row.primary_bank_id,
         primary_account_id=row.primary_account_id,
         created_at=row.created_at,
@@ -204,12 +216,25 @@ def _intent_from_row(row: PaymentIntentRow) -> PaymentIntent:
     )
 
 
+def _account_id_str(value: UUID | str | None) -> str | None:
+    """Normalise an account identifier to a string (or None).
+
+    Handles both :class:`uuid.UUID` objects (from Person primary_account_id)
+    and plain strings (such as ``"account_government_tax"``).
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def _ledger_to_row(entry: LedgerEntry) -> LedgerEntryRow:
     return LedgerEntryRow(
         entry_id=entry.entry_id,
         event_type=entry.event_type,
-        from_account_id=entry.from_account_id,
-        to_account_id=entry.to_account_id,
+        from_account_id=_account_id_str(entry.from_account_id),
+        to_account_id=_account_id_str(entry.to_account_id),
         amount=entry.amount,
         related_attempt_id=entry.related_attempt_id,
         related_subscription_id=entry.related_subscription_id,
@@ -247,6 +272,109 @@ class BankRepository:
         with self._db.session() as session:
             row = session.scalar(select(BankRow).where(BankRow.name == name))
             return _bank_from_row(row) if row else None
+
+    def status(self) -> dict:
+        """Return current bank status summary for the API."""
+        with self._db.session() as session:
+            row = session.scalar(select(BankRow).where(BankRow.name == "RupeeBank"))
+            if row is None:
+                return {
+                    "name": "RupeeBank",
+                    "state": "NORMAL",
+                    "authorization_success_rate": 99.1,
+                }
+            return {
+                "name": row.name,
+                "state": row.current_state,
+                "authorization_success_rate": float(row.authorization_success_rate),
+                "state_multipliers": row.state_multipliers_json,
+            }
+
+
+class SimulationRunRepository:
+    """Repository for SimulationRun records (run traceability)."""
+
+    def __init__(self, db: Database):
+        self._db = db
+
+    def _run_to_row(self, run: SimulationRun) -> SimulationRunRow:
+        return SimulationRunRow(
+            run_id=run.run_id,
+            seed=run.seed,
+            config_snapshot=run.config_snapshot,
+            people_count=run.people_count,
+            hours_run=run.hours_run,
+            status=run.status,
+            error_message=run.error_message,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+            created_at=run.created_at,
+        )
+
+    def _run_from_row(self, row: SimulationRunRow) -> SimulationRun:
+        return SimulationRun(
+            run_id=row.run_id,
+            seed=row.seed,
+            config_snapshot=row.config_snapshot,
+            people_count=row.people_count,
+            hours_run=row.hours_run,
+            status=row.status,
+            error_message=row.error_message,
+            started_at=row.started_at,
+            completed_at=row.completed_at,
+            created_at=row.created_at,
+        )
+
+    def create(self, run: SimulationRun) -> None:
+        with self._db.session() as session:
+            session.add(self._run_to_row(run))
+
+    def save(self, run: SimulationRun) -> None:
+        with self._db.session() as session:
+            session.merge(self._run_to_row(run))
+
+    def find(self, run_id: UUID) -> SimulationRun | None:
+        with self._db.session() as session:
+            row = session.get(SimulationRunRow, run_id)
+            return self._run_from_row(row) if row else None
+
+    def find_latest(self) -> SimulationRun | None:
+        with self._db.session() as session:
+            row = session.scalars(
+                select(SimulationRunRow).order_by(
+                    SimulationRunRow.created_at.desc()
+                ).limit(1)
+            ).first()
+            return self._run_from_row(row) if row else None
+
+    def find_recent(self, limit: int = 50) -> list[SimulationRun]:
+        """Return the most recent simulation runs, newest first."""
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(SimulationRunRow)
+                .order_by(SimulationRunRow.created_at.desc())
+                .limit(limit)
+            ).all()
+            return [self._run_from_row(r) for r in rows]
+
+    def update_status(
+        self,
+        run_id: UUID,
+        status: str,
+        error_message: str | None = None,
+        hours_run: int | None = None,
+    ) -> None:
+        with self._db.session() as session:
+            row = session.get(SimulationRunRow, run_id)
+            if row is None:
+                return
+            row.status = status
+            if error_message is not None:
+                row.error_message = error_message
+            if hours_run is not None:
+                row.hours_run = hours_run
+            if status in ("COMPLETED", "FAILED"):
+                row.completed_at = datetime.now(timezone.utc)
 
 
 class PersonRepository:
@@ -306,6 +434,12 @@ class ProductRepository:
             rows = session.scalars(
                 select(ProductRow).where(ProductRow.product_type == "SUBSCRIPTION")
             ).all()
+            return [_product_from_row(r) for r in rows]
+
+    def find_all_products(self) -> list[Product]:
+        """Return all products (both subscription and one-time)."""
+        with self._db.session() as session:
+            rows = session.scalars(select(ProductRow)).all()
             return [_product_from_row(r) for r in rows]
 
     def first_product_for_merchant(self, merchant_id) -> UUID:
@@ -429,11 +563,18 @@ class PaymentIntentRepository:
             return {row.merchant_id: row.total for row in rows}
 
     def monthly_revenue(self, merchant_id) -> list[dict]:
-        """Return monthly revenue breakdown for a merchant from SETTLED intents."""
+        """Return monthly revenue breakdown for a merchant from SETTLED intents.
+
+        Uses ``extract`` (year/month) instead of PostgreSQL-specific ``to_char``
+        so that the same query works on SQLite (tests) and PostgreSQL.
+        """
         with self._db.session() as session:
+            year_expr = extract("year", PaymentIntentRow.created_at)
+            month_expr = extract("month", PaymentIntentRow.created_at)
             rows = session.execute(
                 select(
-                    func.to_char(PaymentIntentRow.created_at, "YYYY-MM").label("month"),
+                    year_expr.label("year"),
+                    month_expr.label("month"),
                     func.coalesce(func.sum(PaymentIntentRow.amount), 0).label("total"),
                     func.count().label("count"),
                 )
@@ -441,11 +582,15 @@ class PaymentIntentRepository:
                     PaymentIntentRow.merchant_id == merchant_id,
                     PaymentIntentRow.status == "SETTLED",
                 )
-                .group_by("month")
-                .order_by("month")
+                .group_by(year_expr, month_expr)
+                .order_by(year_expr, month_expr)
             ).all()
             return [
-                {"month": r.month, "total_revenue": r.total, "transaction_count": r.count}
+                {
+                    "month": f"{int(r.year)}-{int(r.month):02d}",
+                    "total_revenue": r.total,
+                    "transaction_count": r.count,
+                }
                 for r in rows
             ]
 
@@ -471,37 +616,39 @@ class LedgerRepository:
             ).all()
             return [_ledger_from_row(r) for r in rows]
 
-    def latest_simulation_date(self) -> date | None:
+    def latest_simulation_timestamp(self) -> datetime | None:
         with self._db.session() as session:
             latest_ts = session.scalar(
                 select(func.max(LedgerEntryRow.simulation_timestamp))
             )
-            return latest_ts.date() if latest_ts else None
+            return latest_ts if latest_ts else None
 
-    def balance_of(self, account_id: UUID) -> Decimal:
+    def balance_of(self, account_id: UUID | str) -> Decimal:
         with self._db.session() as session:
+            key = _account_id_str(account_id)
             credits = session.scalar(
                 select(func.coalesce(func.sum(LedgerEntryRow.amount), 0)).where(
-                    LedgerEntryRow.to_account_id == account_id
+                    LedgerEntryRow.to_account_id == key
                 )
             )
             debits = session.scalar(
                 select(func.coalesce(func.sum(LedgerEntryRow.amount), 0)).where(
-                    LedgerEntryRow.from_account_id == account_id
+                    LedgerEntryRow.from_account_id == key
                 )
             )
             return Decimal(credits) - Decimal(debits)
 
-    def balances_for_accounts(self, account_ids: list[UUID]) -> dict[UUID, Decimal]:
+    def balances_for_accounts(self, account_ids: list[UUID | str]) -> dict:
         if not account_ids:
             return {}
         with self._db.session() as session:
+            str_ids = [_account_id_str(a) for a in account_ids]
             credit_rows = session.execute(
                 select(
                     LedgerEntryRow.to_account_id,
                     func.coalesce(func.sum(LedgerEntryRow.amount), 0).label("total"),
                 )
-                .where(LedgerEntryRow.to_account_id.in_(account_ids))
+                .where(LedgerEntryRow.to_account_id.in_(str_ids))
                 .group_by(LedgerEntryRow.to_account_id)
             ).all()
             debit_rows = session.execute(
@@ -509,16 +656,16 @@ class LedgerRepository:
                     LedgerEntryRow.from_account_id,
                     func.coalesce(func.sum(LedgerEntryRow.amount), 0).label("total"),
                 )
-                .where(LedgerEntryRow.from_account_id.in_(account_ids))
+                .where(LedgerEntryRow.from_account_id.in_(str_ids))
                 .group_by(LedgerEntryRow.from_account_id)
             ).all()
             credit_map = {row.to_account_id: row.total for row in credit_rows}
             debit_map = {row.from_account_id: row.total for row in debit_rows}
             balances = {}
-            for account_id in account_ids:
-                credits = credit_map.get(account_id, Decimal(0))
-                debits = debit_map.get(account_id, Decimal(0))
-                balances[account_id] = Decimal(credits) - Decimal(debits)
+            for original_id, str_id in zip(account_ids, str_ids):
+                credits = credit_map.get(str_id, Decimal(0))
+                debits = debit_map.get(str_id, Decimal(0))
+                balances[original_id] = Decimal(credits) - Decimal(debits)
             return balances
 
 

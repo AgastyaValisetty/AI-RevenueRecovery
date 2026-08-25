@@ -1,0 +1,132 @@
+{
+  "version": "1.0.0",
+  "population": {
+    "default_size": 100,
+    "default_seed": 42
+  },
+  "time": {
+    "start_datetime": "2024-01-01T00:00:00Z",
+    "clock_granularity_hours": 1
+  },
+  "age_distribution": {
+    "groups": [
+      {"label": "young_adult", "age_min": 18, "age_max": 29, "weight": 0.18},
+      {"label": "early_career", "age_min": 30, "age_max": 39, "weight": 0.20},
+      {"label": "mid_career", "age_min": 40, "age_max": 49, "weight": 0.22},
+      {"label": "established", "age_min": 50, "age_max": 59, "weight": 0.18},
+      {"label": "pre_retirement", "age_min": 60, "age_max": 74, "weight": 0.12},
+      {"label": "retired", "age_min": 75, "age_max": 80, "weight": 0.10}
+    ]
+  },
+  "income_distribution": {
+    "brackets": [
+      {"min": 15000, "max": 25000, "weight": 0.28},
+      {"min": 25001, "max": 50000, "weight": 0.30},
+      {"min": 50001, "max": 100000, "weight": 0.20},
+      {"min": 100001, "max": 200000, "weight": 0.12},
+      {"min": 200001, "max": 400000, "weight": 0.07},
+      {"min": 400001, "max": 800000, "weight": 0.025},
+      {"min": 800001, "max": 1500000, "weight": 0.005}
+    ],
+    "lognormal_mean": 10.6,
+    "lognormal_sigma": 0.5
+  },
+  "spending": {
+    "base_daily_percentage": 1.5,
+    "salary_day_boost_days": [1, 5, 15],
+    "salary_day_boost": 0.5,
+    "weekend_boost": 0.3,
+    "random_variation_std": 0.2,
+    "profile_multipliers": {
+      "student": 0.7,
+      "young_professional": 1.0,
+      "family": 1.3,
+      "high_income": 1.5,
+      "retired": 0.8
+    },
+    "max_daily_spend_pct": 8.0,
+    "categories": ["groceries", "utilities", "dining", "transport", "entertainment"],
+    "probability_multiplier_low": 0.6,
+    "probability_multiplier_lower_middle": 0.8,
+    "probability_multiplier_middle": 1.0,
+    "probability_multiplier_upper_middle": 1.2,
+    "probability_multiplier_high": 1.5,
+    "prob_mult_age_18_24": 0.8,
+    "prob_mult_age_25_34": 1.0,
+    "prob_mult_age_35_44": 1.3,
+    "prob_mult_age_45_54": 0.9,
+    "prob_mult_age_55_64": 0.6,
+    "prob_mult_age_65_plus": 0.4,
+    "prob_mult_employed": 1.0,
+    "prob_mult_self_employed": 1.4,
+    "prob_mult_student": 0.3,
+    "prob_mult_retired": 0.3,
+    "prob_mult_unemployed": 0.2,
+    "low_balance_threshold": 2000,
+    "low_balance_multiplier": 0.3,
+    "weekday_multiplier": 1.0,
+    "weekend_multiplier": 0.7
+  },
+  "subscription_penetration": {
+    "by_profile": {
+      "student": {"prob_per_sub": 0.35, "min_count": 1, "max_count": 2},
+      "young_professional": {"prob_per_sub": 0.85, "min_count": 2, "max_count": 3},
+      "family": {"prob_per_sub": 0.90, "min_count": 2, "max_count": 3},
+      "high_income": {"prob_per_sub": 0.95, "min_count": 2, "max_count": 4},
+      "retired": {"prob_per_sub": 0.40, "min_count": 0, "max_count": 1}
+    }
+  },
+  "ecommerce": {
+    "shop_probability_by_profile": {
+      "student": 0.05,
+      "young_professional": 0.18,
+      "family": 0.12,
+      "high_income": 0.25,
+      "retired": 0.03
+    },
+    "salary_day_boost_multiplier": 2.0,
+    "merchant_split": {
+      "amazin": 0.5,
+      "flip_cartel": 0.5
+    },
+    "order_value_dist": {
+      "low": {"min": 500, "max": 2000, "weight": 0.40},
+      "medium": {"min": 2001, "max": 8000, "weight": 0.35},
+      "high": {"min": 8001, "max": 25000, "weight": 0.18},
+      "luxury": {"min": 25001, "max": 100000, "weight": 0.07}
+    },
+    "max_order_pct_of_balance": 0.30,
+    "max_salary_fraction": 0.15,
+    "business_hours_start": 10,
+    "business_hours_end": 20,
+    "income_multiplier_low": 0.2,
+    "income_multiplier_lower_middle": 0.5,
+    "income_multiplier_middle": 1.0,
+    "income_multiplier_upper_middle": 1.5,
+    "income_multiplier_high": 2.0,
+    "age_multiplier_18_24": 1.2,
+    "age_multiplier_25_34": 1.4,
+    "age_multiplier_35_44": 0.8,
+    "age_multiplier_45_54": 0.5,
+    "age_multiplier_55_64": 0.3,
+    "age_multiplier_65_plus": 0.1
+  },
+  "salary": {
+    "deposit_hour": 9,
+    "deposit_days_range": [1, 2, 3, 4, 5]
+  },
+  "tax": {
+    "income_tax_rate": 0.30,
+    "gst_rate": 0.18
+  },
+  "bank": {
+    "name": "RupeeBank",
+    "authorization_success_rate": 99.1,
+    "state_multipliers": {
+      "NORMAL": 1.0,
+      "PEAK": 2.0,
+      "DEGRADED": 5.0,
+      "OUTAGE": 50.0
+    }
+  }
+}

@@ -1,9 +1,11 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
 from pydantic import BaseModel
+
+from .domain import STATUS_COMPLETED, STATUS_FAILED, STATUS_PENDING, STATUS_RUNNING
 
 router = APIRouter(prefix="/api")
 
@@ -11,6 +13,8 @@ router = APIRouter(prefix="/api")
 class RunSimulationRequest(BaseModel):
     people_count: int = 100
     days: int = 0
+    hours: int = 0
+    seed: int | None = None
 
 
 class ProcessPaymentRequest(BaseModel):
@@ -20,6 +24,8 @@ class ProcessPaymentRequest(BaseModel):
     amount: float
     payment_method: str
     related_subscription_id: str | None = None
+    source_account_id: str | None = None
+    simulation_timestamp: str | None = None
 
 
 class ProcessPaymentResponse(BaseModel):
@@ -32,10 +38,58 @@ class ProcessPaymentResponse(BaseModel):
 @router.post("/simulation/run")
 def run_simulation(payload: RunSimulationRequest, request: Request) -> dict:
     orchestrator = request.app.state.orchestrator
-    orchestrator.initialize(payload.people_count)
-    if payload.days > 0:
-        orchestrator.run_days(payload.days)
-    return {"status": "completed", "summary": orchestrator.summary()}
+    run_id = orchestrator.initialize(payload.people_count, seed=payload.seed)
+    total_hours = payload.hours + (payload.days * 24)
+    if total_hours > 0:
+        orchestrator.run_hours(total_hours)
+    summary = orchestrator.summary()
+    summary["run_id"] = str(run_id) if run_id else None
+    summary["seed"] = payload.seed
+    return {"status": "completed", "summary": summary}
+
+
+@router.get("/simulation/runs")
+def list_simulation_runs(
+    request: Request, limit: int = 50
+) -> dict:
+    """Return recent simulation runs."""
+    repo = getattr(request.app.state.orchestrator, "_sim_run_repo", None)
+    if repo is None:
+        return {"runs": []}
+    runs = repo.find_recent(limit) if hasattr(repo, "find_recent") else []
+    # Fallback: just return latest
+    latest = repo.find_latest()
+    runs_list = []
+    if latest is not None:
+        runs_list.append(_run_to_dict(latest))
+    return {"runs": runs_list}
+
+
+@router.get("/simulation/runs/{run_id}")
+def get_simulation_run(run_id: UUID, request: Request) -> dict:
+    """Return details for a specific simulation run."""
+    repo = getattr(request.app.state.orchestrator, "_sim_run_repo", None)
+    if repo is None:
+        raise HTTPException(status_code=500, detail="Run repository not available")
+    run = repo.find(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return _run_to_dict(run)
+
+
+def _run_to_dict(run) -> dict:
+    return {
+        "run_id": str(run.run_id),
+        "seed": run.seed,
+        "config_snapshot": run.config_snapshot,
+        "people_count": run.people_count,
+        "hours_run": run.hours_run,
+        "status": run.status,
+        "error_message": run.error_message,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        "created_at": run.created_at.isoformat(),
+    }
 
 
 @router.get("/simulation/status")
@@ -58,7 +112,12 @@ def list_people(request: Request) -> dict:
                 "age": person.age,
                 "salary": str(person.salary),
                 "salary_deposit_day": person.salary_deposit_day,
+                "salary_deposit_hour": getattr(person, "salary_deposit_hour", 9),
                 "spending_profile_category": person.spending_profile_category,
+                "income_bracket": getattr(person, "income_bracket", None),
+                "age_group": getattr(person, "age_group", None),
+                "employment_type": getattr(person, "employment_type", None),
+                "payment_preferences": person.payment_preferences_json,
                 "current_balance": str(balances.get(person.primary_account_id, Decimal(0))),
             }
             for person in people
@@ -78,7 +137,13 @@ def get_person(person_id: UUID, request: Request) -> dict:
         "age": person.age,
         "salary": str(person.salary),
         "salary_deposit_day": person.salary_deposit_day,
+        "salary_deposit_hour": getattr(person, "salary_deposit_hour", 9),
         "spending_profile_category": person.spending_profile_category,
+        "spending_profile": person.spending_profile_json,
+        "income_bracket": getattr(person, "income_bracket", None),
+        "age_group": getattr(person, "age_group", None),
+        "employment_type": getattr(person, "employment_type", None),
+        "payment_preferences": person.payment_preferences_json,
         "current_balance": str(orchestrator.balance_of(person.primary_account_id)),
     }
 
@@ -144,20 +209,51 @@ def list_subscriptions(request: Request, limit: int = 500) -> dict:
 # --- Payment Integration with LazerPay ---
 
 @router.post("/payments/process", response_model=ProcessPaymentResponse)
-def process_payment(payload: ProcessPaymentRequest, request: Request) -> ProcessPaymentResponse:
+def process_payment(
+    payload: ProcessPaymentRequest,
+    request: Request,
+    correlation_id: str = Header(None),
+):
     """Process a payment by calling LazerPay service.
 
     The People Service does NOT call the bank directly.
     It must go through LazerPay API, which then calls RupeeBank.
     """
     from dataclasses import replace
+    from .config import Settings
+    settings = request.app.state.settings
+    lazerpay_url = settings.lazerpay_url
+    http_timeout = settings.http_timeout_seconds
+
     orchestrator = request.app.state.orchestrator
 
-    # Create payment intent and save it
-    from .domain import PaymentIntent, PENDING, now
+    # Resolve the source account — use provided value or look up from person
+    if payload.source_account_id:
+        source_account_id = payload.source_account_id
+    else:
+        try:
+            person = orchestrator._person_repo.find_by_id(UUID(payload.person_id))
+            source_account_id = str(person.primary_account_id) if person else uuid4().hex
+        except (ValueError, AttributeError):
+            source_account_id = payload.source_account_id or uuid4().hex
 
-    # product_id may be a non-UUID string (e.g. "any") from the frontend;
-    # pick an existing product for that merchant so the FK constraint holds.
+    # Resolve simulation timestamp
+    if payload.simulation_timestamp:
+        try:
+            sim_ts = datetime.fromisoformat(payload.simulation_timestamp)
+        except ValueError:
+            sim_ts = orchestrator._clock.current_datetime
+    else:
+        sim_ts = orchestrator._clock.current_datetime
+
+    # Generate or accept correlation ID
+    if not correlation_id:
+        correlation_id = str(uuid4())
+    corr_id = correlation_id[:64]  # truncate to fit column
+
+    # Create payment intent and save it
+    from .domain import PaymentIntent, INTENT_PENDING, now
+
     try:
         product_uuid = UUID(payload.product_id)
     except (ValueError, AttributeError):
@@ -172,27 +268,19 @@ def process_payment(payload: ProcessPaymentRequest, request: Request) -> Process
         product_id=product_uuid,
         amount=payload.amount,
         payment_method=payload.payment_method,
-        status=PENDING,
+        status=INTENT_PENDING,
         related_subscription_id=payload.related_subscription_id,
         created_at=now(),
         expires_at=now() + timedelta(hours=1),
     )
-
-    # Save intent to repository
     orchestrator._intent_repo.add([intent])
 
-    # Look up the person to get their primary bank account for the source
-    from uuid import UUID as _UUID
-    person = orchestrator._person_repo.find_by_id(_UUID(payload.person_id))
-    source_account_id = str(person.primary_account_id) if person else uuid4().hex
-
     # Call LazerPay API to process the payment
-    lazerpay_base = "http://lazerpay_service:8001"  # In production, from config
     import httpx
 
     try:
         response = httpx.post(
-            f"{lazerpay_base}/api/payments/process",
+            f"{lazerpay_url}/api/payments/process",
             json={
                 "intent_id": str(intent.intent_id),
                 "person_id": str(payload.person_id),
@@ -200,13 +288,20 @@ def process_payment(payload: ProcessPaymentRequest, request: Request) -> Process
                 "amount": float(payload.amount),
                 "payment_method": payload.payment_method,
                 "source_account_id": source_account_id,
+                "simulation_timestamp": sim_ts.isoformat(),
+                "correlation_id": corr_id,
             },
-            timeout=30.0,
+            headers={"X-Correlation-ID": corr_id},
+            timeout=http_timeout,
         )
         lazerpay_response = response.json()
-    except Exception as e:
+    except httpx.TimeoutException:
         raise HTTPException(
-            status_code=503, detail=f"LazerPay service unavailable: {str(e)}"
+            status_code=504, detail="LazerPay service timed out"
+        )
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503, detail="LazerPay service unavailable"
         )
 
     # Update intent status based on LazerPay response
@@ -215,12 +310,11 @@ def process_payment(payload: ProcessPaymentRequest, request: Request) -> Process
     failure_code = lazerpay_response.get("failure_code")
     failure_reason = lazerpay_response.get("failure_reason")
 
-    # Update the intent status (frozen dataclass → use replace)
     updated_intent = replace(intent, status=status)
     orchestrator._intent_repo.save(updated_intent)
 
     # Handle subscription if applicable
-    if payload.related_subscription_id and status == "SETTLED":
+    if payload.related_subscription_id and status == "SETTLED" or status == "AUTHORIZED":
         subscription = orchestrator._subscription_repo.find(
             payload.related_subscription_id
         )
@@ -428,7 +522,15 @@ def process_all_payments(request: Request) -> dict:
     from uuid import uuid4 as _uuid4
     import httpx
 
-    from .domain import LedgerEntry, PAYMENT_SETTLED, PAYMENT_FAILED, SETTLED, FAILED, now
+    from .config import Settings
+    from .domain import (
+        LedgerEntry, PAYMENT_SETTLED, PAYMENT_FAILED,
+        INTENT_SETTLED, INTENT_FAILED, now,
+    )
+
+    settings: Settings = request.app.state.settings
+    lazerpay_url = settings.lazerpay_url
+    http_timeout = settings.http_timeout_seconds
 
     orchestrator = request.app.state.orchestrator
     pending = orchestrator.pending_payment_intents()
@@ -436,7 +538,7 @@ def process_all_payments(request: Request) -> dict:
     if not pending:
         return {"processed": 0, "settled": 0, "failed": 0, "message": "No pending payments"}
 
-    lazerpay_base = "http://lazerpay_service:8001"
+    sim_ts = orchestrator._clock.current_datetime
     settled = 0
     failed = 0
     ledger_entries = []
@@ -445,10 +547,15 @@ def process_all_payments(request: Request) -> dict:
         person = orchestrator._person_repo.find_by_id(intent.person_id)
         source_account_id = str(person.primary_account_id) if person else _uuid4().hex
 
+        correlation_id = str(_uuid4())[:64]
+
         status = None
+        attempt_id = None
+        failure_code = None
+
         try:
             response = httpx.post(
-                f"{lazerpay_base}/api/payments/process",
+                f"{lazerpay_url}/api/payments/process",
                 json={
                     "intent_id": str(intent.intent_id),
                     "person_id": str(intent.person_id),
@@ -456,70 +563,76 @@ def process_all_payments(request: Request) -> dict:
                     "amount": float(intent.amount),
                     "payment_method": intent.payment_method,
                     "source_account_id": source_account_id,
+                    "simulation_timestamp": sim_ts.isoformat(),
+                    "correlation_id": correlation_id,
                 },
-                timeout=10.0,
+                headers={"X-Correlation-ID": correlation_id},
+                timeout=http_timeout,
             )
             data = response.json()
             status = data.get("status", "FAILED")
-        except Exception:
+            attempt_id = data.get("attempt_id", "")
+            failure_code = data.get("failure_code")
+        except (httpx.TimeoutException, httpx.ConnectError):
             status = None  # Fall back to inline settlement
 
         if status is None:
-            # Inline settlement fallback (LazerPay unavailable)
             bank = orchestrator._bank_repo.find_by_name("RupeeBank")
-            person = orchestrator._person_repo.find_by_id(intent.person_id)
-            rng = orchestrator._spending_engine._rng
-
             if person:
                 current_balance = orchestrator._ledger_repo.balance_of(person.primary_account_id)
                 if current_balance < intent.amount:
-                    status = FAILED
+                    status = INTENT_FAILED
+                    failure_code = "INSUFFICIENT_FUNDS"
                 else:
                     success_rate = float(bank.authorization_success_rate) if bank else 99.1
-                    if rng.random() * 100 < success_rate:
-                        status = SETTLED
+                    if orchestrator._rng.random() * 100 < success_rate:
+                        status = INTENT_SETTLED
                     else:
-                        status = FAILED
+                        status = INTENT_FAILED
+                        failure_code = "HARD_DECLINE"
             else:
-                status = SETTLED  # No person record, just settle for revenue
+                status = INTENT_SETTLED
 
-        # Use replace() for the frozen dataclass
         updated = replace(intent, status=status)
         orchestrator.settle_intent(updated)
 
-        if status == SETTLED:
+        if status == INTENT_SETTLED:
             settled += 1
-            # Look up person's account for the DEBIT
             p = orchestrator._person_repo.find_by_id(intent.person_id)
-            debit_account = p.primary_account_id if p else None
+            debit_account = str(p.primary_account_id) if p else None
             ledger_entries.append(LedgerEntry(
                 entry_id=_uuid4(),
                 event_type=PAYMENT_SETTLED,
                 from_account_id=debit_account,
                 to_account_id=None,
                 amount=intent.amount,
-                simulation_timestamp=intent.created_at or now(),
-                related_attempt_id=None,
+                simulation_timestamp=sim_ts,
+                related_attempt_id=attempt_id,
                 related_subscription_id=intent.related_subscription_id,
                 metadata_json={
                     "payment_method": intent.payment_method,
                     "amount": str(intent.amount),
+                    "correlation_id": correlation_id,
                 },
             ))
         else:
             failed += 1
+            p = orchestrator._person_repo.find_by_id(intent.person_id)
+            debit_account = str(p.primary_account_id) if p else None
             ledger_entries.append(LedgerEntry(
                 entry_id=_uuid4(),
                 event_type=PAYMENT_FAILED,
-                from_account_id=None,
+                from_account_id=debit_account,
                 to_account_id=None,
                 amount=intent.amount,
-                simulation_timestamp=intent.created_at or now(),
-                related_attempt_id=None,
+                simulation_timestamp=sim_ts,
+                related_attempt_id=attempt_id,
                 related_subscription_id=intent.related_subscription_id,
                 metadata_json={
                     "payment_method": intent.payment_method,
+                    "failure_code": failure_code,
                     "failure_reason": "bank_declined",
+                    "correlation_id": correlation_id,
                 },
             ))
 

@@ -2,6 +2,18 @@
 
 These mirror the core concepts from the people_service domain
 but are LazerPay-specific (attempts, retries, recovery actions).
+
+PaymentAttempt state machine (from UML 11_attempt_state_diagram):
+    [*]    --> INITIATED
+    INITIATED --> ROUTING
+    ROUTING --> AUTHORIZED   (bank success)
+    AUTHORIZED --> SETTLED  (ledger PAYMENT_SETTLED written)
+    ROUTING --> FAILED      (bank decline / timeout / network error / insufficient funds)
+    AUTHORIZED --> FAILED   (settlement failure)
+    INITIATED --> FAILED    (insufficient funds hard check)
+    ROUTING --> UNKNOWN     (ambiguous bank response — not a definitive failure)
+    FAILED --> [*]           (picked up by Recovery Agent)
+    SETTLED --> [*]          (idempotency key blocks re-processing)
 """
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -21,54 +33,21 @@ class BankState(str, Enum):
     OUTAGE = "OUTAGE"
 
 
-@dataclass(frozen=True)
-class BankPolicy:
-    """Bank policy parameters for probabilistic authorization decisions."""
-    bank_id: str
-    name: str
-    authorization_success_rate: float
-    timeout_rate: float
-    issuer_decline_rate: float
-    network_error_rate: float
-    current_state: BankState
-    state_multipliers: dict[str, float]
-    created_at: datetime = field(default_factory=now)
-
-
-class BankStatus:
-    """Lightweight snapshot of a bank's health for gateway decisions."""
-    def __init__(
-        self,
-        bank_id: str,
-        name: str,
-        current_state: str,
-        success_rate: float,
-        failure_rate: float,
-        transactions_last_minute: int,
-        failures_last_minute: int,
-        balance: float = 0.0,
-    ):
-        self.bank_id = bank_id
-        self.name = name
-        self.current_state = current_state
-        self.success_rate = success_rate
-        self.failure_rate = failure_rate
-        self.transactions_last_minute = transactions_last_minute
-        self.failures_last_minute = failures_last_minute
-        self.balance = balance
-
-
 class FailureCode(str, Enum):
+    """Bank-side failure categories used for recovery reasoning."""
     INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS"
     TIMEOUT = "TIMEOUT"
+    NETWORK_ERROR = "NETWORK_ERROR"
     HARD_DECLINE = "HARD_DECLINE"
     EXPIRED_CARD = "EXPIRED_CARD"
     FRAUD_BLOCK = "FRAUD_BLOCK"
-    NETWORK_ERROR = "NETWORK_ERROR"
+    ISSUER_DECLINE = "ISSUER_DECLINE"
+    BANK_DEGRADED = "BANK_DEGRADED"
+    UNKNOWN_OUTCOME = "UNKNOWN_OUTCOME"
 
     @staticmethod
     def _weighted_pick(rng) -> str:
-        """Pick a failure code weighted by frequency (mirrors bank_service)."""
+        """Pick a failure code weighted by frequency."""
         failure_types = [
             (FailureCode.TIMEOUT.value, 0.30),
             (FailureCode.HARD_DECLINE.value, 0.30),
@@ -78,6 +57,35 @@ class FailureCode(str, Enum):
         ]
         values, weights = zip(*failure_types)
         return str(rng.choices(values, weights=weights, k=1)[0])
+
+
+@dataclass(frozen=True)
+class BankAuthorizationRequest:
+    """Request sent to Bank Service for authorization.
+
+    This is the typed contract — not an arbitrary dict — that
+    LazerPay sends to Bank Service via HTTP.
+    """
+    attempt_id: str
+    amount: str
+    payment_method: str
+    source_account_id: str
+    source_balance: str
+    simulation_timestamp: str | None = None
+    correlation_id: str | None = None
+
+
+@dataclass(frozen=True)
+class BankAuthorizationResult:
+    """Response received from Bank Service."""
+    success: bool
+    failure_code: str | None
+    failure_reason: str | None
+    response_time_ms: int
+    bank_state: str
+    source_balance: str
+    authorized_at: datetime
+    unknown_outcome: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,7 +103,11 @@ class PaymentIntent:
 
 @dataclass(frozen=True)
 class PaymentAttempt:
-    """A single authorization attempt for a payment intent."""
+    """A single authorization attempt for a payment intent.
+
+    Implements the full state machine from UML 11_attempt_state_diagram:
+    INITIATED -> ROUTING -> AUTHORIZED -> SETTLED
+    """
     attempt_id: str
     intent_id: str
     attempt_number: int
@@ -103,17 +115,25 @@ class PaymentAttempt:
     merchant_id: str
     amount: Decimal
     payment_method: str
-    source_account_id: str
-    destination_account_id: str
-    status: str  # INITIATED, PENDING, SETTLED, FAILED, PENDING_LINK
+    status: str  # INITIATED, ROUTING, AUTHORIZED, SETTLED, FAILED, UNKNOWN, PENDING_LINK
     idempotency_key: str
+    source_account_id: str | None = None
+    destination_account_id: str | None = None
     failure_code: str | None = None
     failure_reason: str | None = None
+    related_attempt_id: str | None = None
     initiated_at: datetime | None = None
+    routed_at: datetime | None = None
     authorized_at: datetime | None = None
     settled_at: datetime | None = None
+    failed_at: datetime | None = None
+    unknown_at: datetime | None = None
     bank_response_time_ms: int | None = None
-    gateway_processing_time_ms: int | None = None
+    gateway_latency_ms: int | None = None
+    bank_state: str | None = None
+    simulation_timestamp: datetime | None = None
+    correlation_id: str | None = None
+    retry_for_attempt_id: str | None = None
     created_at: datetime = field(default_factory=now)
 
 

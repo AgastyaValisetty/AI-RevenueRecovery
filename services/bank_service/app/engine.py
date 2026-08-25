@@ -38,7 +38,7 @@ class ProbabilityEngine:
         This handles the probabilistic bank-side failures.
         """
         adjusted_rate = self.get_adjusted_success_rate(bank)
-        roll = self._rng.random()
+        roll = self._rng.random() * 100.0
 
         if roll < adjusted_rate:
             return True, None, None
@@ -84,19 +84,19 @@ class BankStateMachine:
         now = datetime.now(timezone.utc)
 
         if current_state == BankState.NORMAL:
-            if txn_count_last_minute > 100 and failure_rate_last_minute > 0.01:
+            if txn_count_last_minute > 100 and failure_rate_last_minute > 1.0:
                 return BankState.PEAK
 
         elif current_state == BankState.PEAK:
-            if failure_rate_last_minute > 0.05:
+            if failure_rate_last_minute > 5.0:
                 return BankState.DEGRADED
             if txn_count_last_minute < 50:
                 return BankState.NORMAL
 
         elif current_state == BankState.DEGRADED:
-            if failure_rate_last_minute > 0.10:
+            if failure_rate_last_minute > 10.0:
                 return BankState.OUTAGE
-            if failure_rate_last_minute < 0.05:
+            if failure_rate_last_minute < 5.0:
                 return BankState.NORMAL
 
         elif current_state == BankState.OUTAGE:
