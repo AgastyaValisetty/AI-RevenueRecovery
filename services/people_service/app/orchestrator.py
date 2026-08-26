@@ -54,6 +54,19 @@ from .ports import (
     SimulationRunRepository,
     SubscriptionRepository,
 )
+from .recovery import (
+    BaselineRecoveryEngine,
+    CustomerResponseSimulator,
+    RecoveryActionExecutor,
+    RecoveryActionRepository,
+    RecoveryActionType,
+    RecoveryContextBuilder,
+    RecoveryOutcome,
+    RecoveryRunMetadata,
+    RecoveryRunTracker,
+    RecoveryScheduler,
+    RecoveryEngineType,
+)
 from .failure_model import classify_failure, failure_probability
 from .rng import SimulationRNG
 from .sim_config import SimConfig
@@ -150,6 +163,8 @@ class Orchestrator:
         rng: SimulationRNG | None = None,
         sim_config: SimConfig | None = None,
         sim_run_repo: SimulationRunRepository | None = None,
+        recovery_repo: RecoveryActionRepository | None = None,
+        settings=None,
     ) -> None:
         self._bank_repo = bank_repo
         self._person_repo = person_repo
@@ -170,6 +185,34 @@ class Orchestrator:
         self._config = sim_config
         self._sim_run_repo = sim_run_repo
         self._current_run: SimulationRun | None = None
+        # Recovery system (optional — baseline is a no-op if not wired)
+        self._recovery_repo = recovery_repo
+        self._settings = settings
+        self._recovery_run_id: UUID | None = None
+        if recovery_repo is not None:
+            self._recovery_engine = BaselineRecoveryEngine()
+            self._recovery_context_builder = RecoveryContextBuilder(
+                person_repo=person_repo,
+                merchant_repo=merchant_repo,
+                subscription_repo=subscription_repo,
+                intent_repo=intent_repo,
+                ledger_repo=ledger_repo,
+                recovery_repo=recovery_repo,
+            )
+            self._recovery_scheduler = RecoveryScheduler(recovery_repo)
+            response_rng = self._rng.spawn("customer_response")
+            self._customer_response_sim = CustomerResponseSimulator(response_rng)
+            self._recovery_executor = RecoveryActionExecutor(
+                settings=settings,
+                recovery_repo=recovery_repo,
+                customer_response_sim=self._customer_response_sim,
+            )
+        else:
+            self._recovery_engine = None
+            self._recovery_context_builder = None
+            self._recovery_scheduler = None
+            self._recovery_executor = None
+            self._customer_response_sim = None
 
     # ------------------------------------------------------------------
     # Initialization
@@ -224,6 +267,27 @@ class Orchestrator:
             self._current_run = run
             run_id = run.run_id
 
+        # Create a recovery run for traceability — persist it to simulation_runs
+        # so that the FK constraint on recovery_actions.run_id is satisfied.
+        if self._recovery_repo is not None:
+            recovery_run = RecoveryRunMetadata(
+                run_id=uuid4(),
+                seed=self._rng.seed or 42,
+                engine_type=RecoveryEngineType.BASELINE,
+                start_time=now(),
+                max_retries=3,
+                retry_interval_hours=12,
+                config_snapshot={"version": getattr(self._config, "version", "1.0.0")},
+            )
+            recovery_tracker = RecoveryRunTracker(self._recovery_repo._db)
+            persisted = recovery_tracker.create(
+                seed=recovery_run.seed,
+                engine_type=recovery_run.engine_type,
+                max_retries=recovery_run.max_retries,
+                retry_interval_hours=recovery_run.retry_interval_hours,
+            )
+            self._recovery_run_id = persisted.run_id
+
         return run_id
 
     # ------------------------------------------------------------------
@@ -270,6 +334,10 @@ class Orchestrator:
                 # Phase: e-commerce purchases during business hours (10-20)
                 if 10 <= current_dt.hour <= 20:
                     self._generate_ecommerce_purchases(current_dt, day_type)
+
+                # Phase: recovery processing (every hour)
+                if self._recovery_repo is not None:
+                    self._process_recovery(current_dt)
 
             # Update run status to COMPLETED
             if self._current_run is not None and self._sim_run_repo is not None:
@@ -367,6 +435,113 @@ class Orchestrator:
 
     def payment_intents(self, limit: int = 500) -> list:
         return self._intent_repo.find_all(limit=limit)
+
+    # ------------------------------------------------------------------
+    # Recovery phase
+    # ------------------------------------------------------------------
+
+    def _process_recovery(self, current_dt: datetime) -> None:
+        """Run one hour of the recovery system.
+
+        Two steps:
+        1. Execute due RETRY actions (scheduled_for <= current time).
+        2. Detect new FAILED intents from this hour's settlement,
+           run the engine, and schedule new recovery actions.
+        """
+        if self._recovery_repo is None:
+            return
+
+        # Step 1: execute due retry actions
+        due_actions = self._recovery_scheduler.find_due_actions(current_dt)
+        for action in due_actions:
+            self._recovery_executor.execute(action, current_dt)
+
+        # Step 2: detect new failures and create recovery actions
+        self._detect_and_schedule_failures(current_dt)
+
+    def _detect_and_schedule_failures(self, current_dt: datetime) -> None:
+        """Scan for FAILED payment intents without recovery actions and schedule."""
+        if self._recovery_repo is None or self._recovery_engine is None:
+            return
+
+        # Find all FAILED payment intents
+        failed_intents = self._intent_repo.find_failed()
+
+        for intent in failed_intents:
+            # Skip if a RETRY is already scheduled but not yet executed (avoid duplicates)
+            existing = self._recovery_repo.find_by_intent_id(intent.intent_id)
+            if any(
+                a.outcome == RecoveryOutcome.PENDING
+                and a.action_type == RecoveryActionType.RETRY
+                for a in existing
+            ):
+                continue
+            # Skip if already stopped (customer declined or max retries)
+            if any(a.action_type == RecoveryActionType.STOP for a in existing):
+                continue
+            # Skip if already recovered successfully — no further retries needed
+            if any(a.outcome == RecoveryOutcome.SUCCESS for a in existing):
+                continue
+
+            # Find the ledger entry for this failed intent to extract failure info
+            failure_code = None
+            failure_reason = None
+            failure_ts = current_dt
+            attempt_id = None
+            bank_state = "NORMAL"
+
+            # Look up the failure from ledger metadata
+            failed_entries = self._ledger_repo.find_failed(limit=200)
+            for entry in failed_entries:
+                meta = entry.metadata_json or {}
+                if (
+                    meta.get("person_id") == str(intent.person_id)
+                    and meta.get("merchant_id") == str(intent.merchant_id)
+                    and str(meta.get("amount", "")) == str(intent.amount)
+                    and meta.get("payment_method") == intent.payment_method
+                ):
+                    failure_code = meta.get("failure_code")
+                    failure_reason = meta.get("failure_reason")
+                    failure_ts = entry.simulation_timestamp
+                    attempt_id = meta.get("attempt_id") or entry.related_attempt_id
+                    bank_state = meta.get("bank_state", "NORMAL")
+                    break
+
+            # Build context and decide
+            attempt_info = None
+            if attempt_id:
+                from .recovery.context import AttemptInfo
+                attempt_info = AttemptInfo(
+                    attempt_id=attempt_id,
+                    intent_id=str(intent.intent_id),
+                    attempt_number=1,
+                    person_id=str(intent.person_id),
+                    merchant_id=str(intent.merchant_id),
+                    amount=intent.amount,
+                    payment_method=intent.payment_method,
+                    status="FAILED",
+                    failure_code=failure_code,
+                    failure_reason=failure_reason,
+                    source_account_id=str(intent.person_id),
+                    simulation_timestamp=failure_ts,
+                    bank_state=bank_state,
+                    bank_response_time_ms=None,
+                    gateway_latency_ms=None,
+                    failed_at=failure_ts,
+                )
+
+            context = self._recovery_context_builder.build_for_intent(
+                intent=intent,
+                current_simulation_time=current_dt,
+                failure_code=failure_code,
+                failure_reason=failure_reason,
+                bank_state=bank_state,
+                failure_timestamp=failure_ts,
+                attempt_info=attempt_info,
+            )
+
+            decision = self._recovery_engine.decide(context)
+            self._recovery_scheduler.schedule(decision, context, self._recovery_run_id)
 
     # ------------------------------------------------------------------
     # Phase implementations

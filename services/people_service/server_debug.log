@@ -1,0 +1,428 @@
+INFO:     Started server process [37668]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
+Simulation failed
+Traceback (most recent call last):
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1965, in _exec_single_context
+    self.dialect.do_execute(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 921, in do_execute
+    cursor.execute(statement, parameters)
+psycopg2.errors.UndefinedColumn: column recovery_actions.run_id does not exist
+LINE 1: SELECT recovery_actions.action_id, recovery_actions.run_id, ...
+                                           ^
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\orchestrator.py", line 332, in run_hours
+    self._process_recovery(current_dt)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\orchestrator.py", line 447, in _process_recovery
+    due_actions = self._recovery_scheduler.find_due_actions(current_dt)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\recovery\scheduler.py", line 131, in find_due_actions
+    return self._recovery_repo.find_scheduled_for_execution(current_time)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\recovery\repository.py", line 145, in find_scheduled_for_execution
+    rows = session.scalars(
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 2374, in scalars
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 2144, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\context.py", line 293, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1412, in execute
+    return meth(
+           ^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\sql\elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1635, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1844, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1984, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 2339, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1965, in _exec_single_context
+    self.dialect.do_execute(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 921, in do_execute
+    cursor.execute(statement, parameters)
+sqlalchemy.exc.ProgrammingError: (psycopg2.errors.UndefinedColumn) column recovery_actions.run_id does not exist
+LINE 1: SELECT recovery_actions.action_id, recovery_actions.run_id, ...
+                                           ^
+
+[SQL: SELECT recovery_actions.action_id, recovery_actions.run_id, recovery_actions.related_attempt_id, recovery_actions.payment_intent_id, recovery_actions.action_type, recovery_actions.reason, recovery_actions.schedule_reason, recovery_actions.scheduled_for, recovery_actions.executed_at, recovery_actions.outcome, recovery_actions.cost, recovery_actions.expected_recovery, recovery_actions.retry_number, recovery_actions.amount, recovery_actions.payment_method, recovery_actions.failure_code, recovery_actions.failure_reason, recovery_actions.retry_attempt_id, recovery_actions.customer_declined, recovery_actions.metadata_json, recovery_actions.created_at 
+FROM recovery_actions 
+WHERE recovery_actions.action_type = %(action_type_1)s AND recovery_actions.scheduled_for <= %(scheduled_for_1)s AND recovery_actions.executed_at IS NULL ORDER BY recovery_actions.scheduled_for ASC]
+[parameters: {'action_type_1': 'RETRY', 'scheduled_for_1': datetime.datetime(2024, 6, 28, 21, 0, tzinfo=datetime.timezone.utc)}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1965, in _exec_single_context
+    self.dialect.do_execute(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 921, in do_execute
+    cursor.execute(statement, parameters)
+psycopg2.errors.UndefinedColumn: column recovery_actions.run_id does not exist
+LINE 1: SELECT recovery_actions.action_id, recovery_actions.run_id, ...
+                                           ^
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\uvicorn\protocols\http\httptools_impl.py", line 399, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 70, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    raise exc
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 1780, in handle
+    await self.original_router.handle(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 2789, in handle
+    await included_router._handle_selected(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 1800, in _handle_selected
+    await original_route.handle(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 1279, in handle
+    await app(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 354, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\concurrency.py", line 34, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\anyio\to_thread.py", line 65, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\anyio\_backends\_asyncio.py", line 2641, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\api.py", line 46, in run_simulation
+    orchestrator.run_hours(total_hours)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\orchestrator.py", line 332, in run_hours
+    self._process_recovery(current_dt)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\orchestrator.py", line 447, in _process_recovery
+    due_actions = self._recovery_scheduler.find_due_actions(current_dt)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\recovery\scheduler.py", line 131, in find_due_actions
+    return self._recovery_repo.find_scheduled_for_execution(current_time)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\recovery\repository.py", line 145, in find_scheduled_for_execution
+    rows = session.scalars(
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 2374, in scalars
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 2144, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\context.py", line 293, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1412, in execute
+    return meth(
+           ^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\sql\elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1635, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1844, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1984, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 2339, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1965, in _exec_single_context
+    self.dialect.do_execute(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 921, in do_execute
+    cursor.execute(statement, parameters)
+sqlalchemy.exc.ProgrammingError: (psycopg2.errors.UndefinedColumn) column recovery_actions.run_id does not exist
+LINE 1: SELECT recovery_actions.action_id, recovery_actions.run_id, ...
+                                           ^
+
+[SQL: SELECT recovery_actions.action_id, recovery_actions.run_id, recovery_actions.related_attempt_id, recovery_actions.payment_intent_id, recovery_actions.action_type, recovery_actions.reason, recovery_actions.schedule_reason, recovery_actions.scheduled_for, recovery_actions.executed_at, recovery_actions.outcome, recovery_actions.cost, recovery_actions.expected_recovery, recovery_actions.retry_number, recovery_actions.amount, recovery_actions.payment_method, recovery_actions.failure_code, recovery_actions.failure_reason, recovery_actions.retry_attempt_id, recovery_actions.customer_declined, recovery_actions.metadata_json, recovery_actions.created_at 
+FROM recovery_actions 
+WHERE recovery_actions.action_type = %(action_type_1)s AND recovery_actions.scheduled_for <= %(scheduled_for_1)s AND recovery_actions.executed_at IS NULL ORDER BY recovery_actions.scheduled_for ASC]
+[parameters: {'action_type_1': 'RETRY', 'scheduled_for_1': datetime.datetime(2024, 6, 28, 21, 0, tzinfo=datetime.timezone.utc)}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+Simulation failed
+Traceback (most recent call last):
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1965, in _exec_single_context
+    self.dialect.do_execute(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 921, in do_execute
+    cursor.execute(statement, parameters)
+psycopg2.errors.ForeignKeyViolation: insert or update on table "recovery_actions" violates foreign key constraint "recovery_actions_run_id_fkey"
+DETAIL:  Key (run_id)=(3ab53432-bc6c-4f71-b26d-e527bfc9de00) is not present in table "simulation_runs".
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\orchestrator.py", line 332, in run_hours
+    self._process_recovery(current_dt)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\orchestrator.py", line 452, in _process_recovery
+    self._detect_and_schedule_failures(current_dt)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\orchestrator.py", line 536, in _detect_and_schedule_failures
+    self._recovery_scheduler.schedule(decision, context, self._recovery_run_id)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\recovery\scheduler.py", line 118, in schedule
+    self._recovery_repo.add(action)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\recovery\repository.py", line 86, in add
+    with self._db.session() as session:
+         ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\contextlib.py", line 144, in __exit__
+    next(self.gen)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\database.py", line 34, in session
+    session.commit()
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 1923, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 1239, in commit
+    self._prepare_impl()
+  File "<string>", line 2, in _prepare_impl
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 1214, in _prepare_impl
+    self.session.flush()
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 4179, in flush
+    self._flush(objects)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 4314, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\util\langhelpers.py", line 147, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 4275, in _flush
+    flush_context.execute()
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\persistence.py", line 93, in save_obj
+    _emit_insert_statements(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\persistence.py", line 1043, in _emit_insert_statements
+    result = connection.execute(
+             ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1412, in execute
+    return meth(
+           ^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\sql\elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1635, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1844, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1984, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 2339, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1965, in _exec_single_context
+    self.dialect.do_execute(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 921, in do_execute
+    cursor.execute(statement, parameters)
+sqlalchemy.exc.IntegrityError: (psycopg2.errors.ForeignKeyViolation) insert or update on table "recovery_actions" violates foreign key constraint "recovery_actions_run_id_fkey"
+DETAIL:  Key (run_id)=(3ab53432-bc6c-4f71-b26d-e527bfc9de00) is not present in table "simulation_runs".
+
+[SQL: INSERT INTO recovery_actions (action_id, run_id, related_attempt_id, payment_intent_id, action_type, reason, schedule_reason, scheduled_for, executed_at, outcome, cost, expected_recovery, retry_number, amount, payment_method, failure_code, failure_reason, retry_attempt_id, customer_declined, metadata_json, created_at) VALUES (%(action_id)s, %(run_id)s, %(related_attempt_id)s, %(payment_intent_id)s, %(action_type)s, %(reason)s, %(schedule_reason)s, %(scheduled_for)s, %(executed_at)s, %(outcome)s, %(cost)s, %(expected_recovery)s, %(retry_number)s, %(amount)s, %(payment_method)s, %(failure_code)s, %(failure_reason)s, %(retry_attempt_id)s, %(customer_declined)s, %(metadata_json)s, %(created_at)s)]
+[parameters: {'action_id': 'bb70e032-aa36-43a3-869b-bbdf7ef1abeb', 'run_id': '3ab53432-bc6c-4f71-b26d-e527bfc9de00', 'related_attempt_id': None, 'payment_intent_id': '41cc7166-5ec1-4dd3-be60-226d6c1acee3', 'action_type': 'RETRY', 'reason': 'retry_scheduled', 'schedule_reason': 'retry_scheduled', 'scheduled_for': datetime.datetime(2024, 6, 29, 22, 0, tzinfo=datetime.timezone.utc), 'executed_at': None, 'outcome': 'PENDING', 'cost': None, 'expected_recovery': None, 'retry_number': 1, 'amount': Decimal('588.82'), 'payment_method': 'UPI', 'failure_code': 'INSUFFICIENT_FUNDS', 'failure_reason': 'Insufficient balance', 'retry_attempt_id': None, 'customer_declined': False, 'metadata_json': '{"intent_id": "41cc7166-5ec1-4dd3-be60-226d6c1acee3", "person_id": "468cc853-bcd8-4b2b-bf87-807643923c46", "merchant_id": "d2853d1f-536f-471c-b9c8-46c6c86f6a2c", "failure_timestamp": "2024-06-29T10:00:00+00:00", "bank_state": "NORMAL", "retry_number": 1}', 'created_at': datetime.datetime(2026, 8, 26, 17, 22, 18, 293940, tzinfo=datetime.timezone.utc)}]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1965, in _exec_single_context
+    self.dialect.do_execute(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 921, in do_execute
+    cursor.execute(statement, parameters)
+psycopg2.errors.ForeignKeyViolation: insert or update on table "recovery_actions" violates foreign key constraint "recovery_actions_run_id_fkey"
+DETAIL:  Key (run_id)=(3ab53432-bc6c-4f71-b26d-e527bfc9de00) is not present in table "simulation_runs".
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\uvicorn\protocols\http\httptools_impl.py", line 399, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 70, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    raise exc
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 1780, in handle
+    await self.original_router.handle(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 2789, in handle
+    await included_router._handle_selected(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 1800, in _handle_selected
+    await original_route.handle(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 1279, in handle
+    await app(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\routing.py", line 354, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\starlette\concurrency.py", line 34, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\anyio\to_thread.py", line 65, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\anyio\_backends\_asyncio.py", line 2641, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\api.py", line 46, in run_simulation
+    orchestrator.run_hours(total_hours)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\orchestrator.py", line 332, in run_hours
+    self._process_recovery(current_dt)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\orchestrator.py", line 452, in _process_recovery
+    self._detect_and_schedule_failures(current_dt)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\orchestrator.py", line 536, in _detect_and_schedule_failures
+    self._recovery_scheduler.schedule(decision, context, self._recovery_run_id)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\recovery\scheduler.py", line 118, in schedule
+    self._recovery_repo.add(action)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\recovery\repository.py", line 86, in add
+    with self._db.session() as session:
+         ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\contextlib.py", line 144, in __exit__
+    next(self.gen)
+  File "D:\Work\AI-RevenueRecovery\services\people_service\app\database.py", line 34, in session
+    session.commit()
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 1923, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 1239, in commit
+    self._prepare_impl()
+  File "<string>", line 2, in _prepare_impl
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 1214, in _prepare_impl
+    self.session.flush()
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 4179, in flush
+    self._flush(objects)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 4314, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\util\langhelpers.py", line 147, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py", line 4275, in _flush
+    flush_context.execute()
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\persistence.py", line 93, in save_obj
+    _emit_insert_statements(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\persistence.py", line 1043, in _emit_insert_statements
+    result = connection.execute(
+             ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1412, in execute
+    return meth(
+           ^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\sql\elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1635, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1844, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1984, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 2339, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py", line 1965, in _exec_single_context
+    self.dialect.do_execute(
+  File "C:\Users\Agastya\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 921, in do_execute
+    cursor.execute(statement, parameters)
+sqlalchemy.exc.IntegrityError: (psycopg2.errors.ForeignKeyViolation) insert or update on table "recovery_actions" violates foreign key constraint "recovery_actions_run_id_fkey"
+DETAIL:  Key (run_id)=(3ab53432-bc6c-4f71-b26d-e527bfc9de00) is not present in table "simulation_runs".
+
+[SQL: INSERT INTO recovery_actions (action_id, run_id, related_attempt_id, payment_intent_id, action_type, reason, schedule_reason, scheduled_for, executed_at, outcome, cost, expected_recovery, retry_number, amount, payment_method, failure_code, failure_reason, retry_attempt_id, customer_declined, metadata_json, created_at) VALUES (%(action_id)s, %(run_id)s, %(related_attempt_id)s, %(payment_intent_id)s, %(action_type)s, %(reason)s, %(schedule_reason)s, %(scheduled_for)s, %(executed_at)s, %(outcome)s, %(cost)s, %(expected_recovery)s, %(retry_number)s, %(amount)s, %(payment_method)s, %(failure_code)s, %(failure_reason)s, %(retry_attempt_id)s, %(customer_declined)s, %(metadata_json)s, %(created_at)s)]
+[parameters: {'action_id': 'bb70e032-aa36-43a3-869b-bbdf7ef1abeb', 'run_id': '3ab53432-bc6c-4f71-b26d-e527bfc9de00', 'related_attempt_id': None, 'payment_intent_id': '41cc7166-5ec1-4dd3-be60-226d6c1acee3', 'action_type': 'RETRY', 'reason': 'retry_scheduled', 'schedule_reason': 'retry_scheduled', 'scheduled_for': datetime.datetime(2024, 6, 29, 22, 0, tzinfo=datetime.timezone.utc), 'executed_at': None, 'outcome': 'PENDING', 'cost': None, 'expected_recovery': None, 'retry_number': 1, 'amount': Decimal('588.82'), 'payment_method': 'UPI', 'failure_code': 'INSUFFICIENT_FUNDS', 'failure_reason': 'Insufficient balance', 'retry_attempt_id': None, 'customer_declined': False, 'metadata_json': '{"intent_id": "41cc7166-5ec1-4dd3-be60-226d6c1acee3", "person_id": "468cc853-bcd8-4b2b-bf87-807643923c46", "merchant_id": "d2853d1f-536f-471c-b9c8-46c6c86f6a2c", "failure_timestamp": "2024-06-29T10:00:00+00:00", "bank_state": "NORMAL", "retry_number": 1}', 'created_at': datetime.datetime(2026, 8, 26, 17, 22, 18, 293940, tzinfo=datetime.timezone.utc)}]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)

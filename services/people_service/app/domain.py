@@ -42,6 +42,11 @@ UPI = "UPI"
 CARD = "CARD"
 NETBANKING = "NETBANKING"
 
+# LazerPay is a payment-gateway entity that takes a cut from the merchant on
+# every settled transaction.  Flat 2% across all payment methods (UPI, CARD,
+# NETBANKING).  LazerPay revenue accrues as a share of the settled volume.
+LAZERPAY_FEE_RATE = "0.02"
+
 # Human-readable reason + category for every failure code. Single source of
 # truth lives in failure_model.FAILURE_TYPES; FAILURE_REASONS / FAILURE_CATEGORIES
 # (new taxonomy, old dummy codes removed) are re-exported above.

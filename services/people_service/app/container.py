@@ -36,6 +36,7 @@ from .repositories import (
     SimulationRunRepository,
     SubscriptionRepository,
 )
+from .recovery.repository import RecoveryActionRepository
 from .rng import SimulationRNG
 from .sim_config import SimConfig
 
@@ -50,6 +51,8 @@ def build_orchestrator(
     db: Database,
     seed: int | None = None,
     config: SimConfig | None = None,
+    settings: Settings | None = None,
+    enable_recovery: bool = True,
 ) -> Orchestrator:
     """Build a fully-wired :class:`Orchestrator`.
 
@@ -62,6 +65,10 @@ def build_orchestrator(
         ``population.default_seed``.
     config : SimConfig, optional
         Calibrated configuration.  Loads ``sim_calibration.json`` if omitted.
+    settings : Settings, optional
+        Application settings (includes lazerpay_url).  Required for recovery.
+    enable_recovery : bool
+        If True (default), wires the baseline recovery system into the orchestrator.
     """
     config = config or SimConfig.defaults()
     seed = seed if seed is not None else config.population.default_seed
@@ -85,6 +92,9 @@ def build_orchestrator(
 
     clock = SimulationClock(config.temporal.start_datetime)
 
+    sim_run_repo = SimulationRunRepository(db)
+    recovery_repo = RecoveryActionRepository(db) if enable_recovery else None
+
     orchestrator = Orchestrator(
         bank_repo=BankRepository(db),
         person_repo=PersonRepository(db),
@@ -93,7 +103,9 @@ def build_orchestrator(
         subscription_repo=SubscriptionRepository(db),
         intent_repo=PaymentIntentRepository(db),
         ledger_repo=LedgerRepository(db),
-        sim_run_repo=SimulationRunRepository(db),
+        sim_run_repo=sim_run_repo,
+        recovery_repo=recovery_repo,
+        settings=settings,
         person_generator=person_generator,
         merchant_generator=merchant_generator,
         subscription_generator=subscription_generator,
@@ -107,6 +119,9 @@ def build_orchestrator(
     )
 
     logger.info(
-        "Orchestrator built: seed=%s, config_version=%s", seed, config.version
+        "Orchestrator built: seed=%s, config_version=%s, recovery=%s",
+        seed,
+        config.version,
+        enable_recovery,
     )
     return orchestrator

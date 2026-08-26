@@ -533,6 +533,20 @@ class PaymentIntentRepository:
             ).all()
             return [_intent_from_row(r) for r in rows]
 
+    def find_failed(self) -> list[PaymentIntent]:
+        """Return all FAILED payment intents."""
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(PaymentIntentRow).where(PaymentIntentRow.status == "FAILED")
+            ).all()
+            return [_intent_from_row(r) for r in rows]
+
+    def find_by_id(self, intent_id: UUID) -> PaymentIntent | None:
+        """Find a payment intent by its UUID."""
+        with self._db.session() as session:
+            row = session.get(PaymentIntentRow, intent_id)
+            return _intent_from_row(row) if row else None
+
     def save(self, intent: PaymentIntent) -> None:
         with self._db.session() as session:
             session.merge(_intent_to_row(intent))

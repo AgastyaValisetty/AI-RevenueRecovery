@@ -1,11 +1,13 @@
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
+
+_MONEY = Decimal("0.01")
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
 from pydantic import BaseModel
 
-from .domain import STATUS_COMPLETED, STATUS_FAILED, STATUS_PENDING, STATUS_RUNNING
+from .domain import STATUS_COMPLETED, STATUS_FAILED, STATUS_PENDING, STATUS_RUNNING, LAZERPAY_FEE_RATE
 
 router = APIRouter(prefix="/api")
 
@@ -500,21 +502,31 @@ def add_merchant(payload: AddMerchantRequest, request: Request) -> dict:
 
 @router.get("/revenue")
 def get_revenue(request: Request) -> dict:
-    """Return revenue summary for all merchants (lifetime + monthly)."""
+    """Return revenue summary for all merchants (lifetime + monthly) and the
+    LazerPay gateway's cut.
+
+    LazerPay earns a flat 2% fee (across every payment method) on each settled
+    transaction, taken from the merchant side.  Merchant ``lifetime_revenue``
+    is the gross settled volume; ``lazerpay_fee`` (per merchant) and the top-level
+    ``lazerpay_revenue`` are that merchant's / aggregate 2% cut that LazerPay keeps.
+    """
     orchestrator = request.app.state.orchestrator
     merchants = orchestrator.merchants()
     revenue_map = orchestrator.revenue_by_merchant()
+    fee_rate = Decimal(LAZERPAY_FEE_RATE)
 
     merchant_list = []
     for m in merchants:
         total = revenue_map.get(m.merchant_id, Decimal(0))
         monthly = orchestrator.monthly_revenue_for_merchant(m.merchant_id)
         transactions = orchestrator.settled_transactions_for_merchant(m.merchant_id)
+        lazer_fee = (total * fee_rate).quantize(_MONEY, rounding=ROUND_HALF_UP)
         merchant_list.append({
             "merchant_id": str(m.merchant_id),
             "name": m.name,
             "merchant_type": m.merchant_type,
             "lifetime_revenue": str(total),
+            "lazerpay_fee": str(lazer_fee),
             "transaction_count": len(transactions),
             "monthly_revenue": monthly,
             "recent_transactions": [
@@ -535,8 +547,11 @@ def get_revenue(request: Request) -> dict:
         (revenue_map.get(m.merchant_id, Decimal(0)) for m in merchants),
         Decimal(0),
     )
+    lazerpay_total = (grand_total * fee_rate).quantize(_MONEY, rounding=ROUND_HALF_UP)
     return {
         "total_lifetime_revenue": str(grand_total),
+        "lazerpay_fee_rate": LAZERPAY_FEE_RATE,
+        "lazerpay_revenue": str(lazerpay_total),
         "merchant_count": len(merchants),
         "merchants": merchant_list,
     }
@@ -734,4 +749,158 @@ def process_all_payments(request: Request) -> dict:
         "processed": len(pending),
         "settled": settled,
         "failed": failed,
+    }
+
+
+# --- Recovery System ---
+
+@router.get("/recovery/actions")
+def list_recovery_actions(
+    request: Request,
+    limit: int = 500,
+    outcome: str | None = None,
+    action_type: str | None = None,
+) -> dict:
+    """Return recovery actions, optionally filtered by outcome or action type.
+
+    Each action is a fully auditable record with all fields needed to
+    reconstruct the recovery history for a failed payment.
+    """
+    recovery_repo = getattr(request.app.state.orchestrator, "_recovery_repo", None)
+    if recovery_repo is None:
+        return {"actions": [], "count": 0, "recovery_enabled": False}
+
+    actions = recovery_repo.find_all(
+        limit=limit, outcome=outcome, action_type=action_type
+    )
+    return {
+        "actions": [_action_to_dict(a) for a in actions],
+        "count": len(actions),
+        "recovery_enabled": True,
+    }
+
+
+@router.get("/recovery/actions/intent/{intent_id}")
+def get_recovery_history(intent_id: UUID, request: Request) -> dict:
+    """Return the full recovery history for a single failed payment intent."""
+    recovery_repo = getattr(request.app.state.orchestrator, "_recovery_repo", None)
+    if recovery_repo is None:
+        return {"actions": [], "count": 0, "recovery_enabled": False}
+
+    actions = recovery_repo.find_by_intent_id(intent_id)
+    return {
+        "intent_id": str(intent_id),
+        "actions": [_action_to_dict(a) for a in actions],
+        "count": len(actions),
+        "recovery_enabled": True,
+    }
+
+
+@router.get("/recovery/metrics")
+def get_recovery_metrics(request: Request, run_id: UUID | None = None) -> dict:
+    """Return aggregated recovery metrics (counts, GMV, rates, breakdowns)."""
+    recovery_repo = getattr(request.app.state.orchestrator, "_recovery_repo", None)
+    if recovery_repo is None:
+        return {
+            "recovery_enabled": False,
+            "total_recovery_actions": 0,
+            "retry_actions": 0,
+            "successful_recoveries": 0,
+            "failed_recoveries": 0,
+            "recovery_rate": 0.0,
+            "total_recovered_gmv": "0",
+        }
+
+    from .recovery.metrics import RecoveryMetricsCollector
+
+    collector = RecoveryMetricsCollector(recovery_repo._db)
+    metrics = collector.collect(run_id=run_id)
+    result = metrics.to_dict()
+    result["recovery_enabled"] = True
+    return result
+
+
+@router.get("/recovery/runs")
+def list_recovery_runs(request: Request, limit: int = 50) -> dict:
+    """Return recent recovery run metadata (strategy, seed, outcomes)."""
+    repo = getattr(request.app.state.orchestrator, "_sim_run_repo", None)
+    if repo is None:
+        return {"runs": []}
+
+    runs = repo.find_recent(limit) if hasattr(repo, "find_recent") else []
+    runs_list = []
+    for run in runs:
+        snapshot = run.config_snapshot or {}
+        is_recovery = snapshot.get("engine_type") is not None
+        if is_recovery:
+            runs_list.append({
+                "run_id": str(run.run_id),
+                "seed": run.seed,
+                "engine_type": snapshot.get("engine_type", "BASELINE"),
+                "status": run.status,
+                "max_retries": snapshot.get("max_retries", 3),
+                "retry_interval_hours": snapshot.get("retry_interval_hours", 12),
+                "total_recovery_actions": snapshot.get("total_recovery_actions", 0),
+                "successful_recoveries": snapshot.get("successful_recoveries", 0),
+                "failed_recoveries": snapshot.get("failed_recoveries", 0),
+                "stopped_recoveries": snapshot.get("stopped_recoveries", 0),
+                "recovered_gmv": str(snapshot.get("recovered_gmv", "0")),
+                "hours_run": run.hours_run,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            })
+
+    # Also include the current recovery run from the orchestrator
+    orch = request.app.state.orchestrator
+    current_run_id = getattr(orch, "_recovery_run_id", None)
+    if current_run_id and not any(r["run_id"] == str(current_run_id) for r in runs_list):
+        from .recovery.run import RecoveryRunTracker
+        tracker = RecoveryRunTracker(recovery_repo._db) if recovery_repo else None
+        if tracker:
+            meta = tracker.find(current_run_id)
+            if meta:
+                runs_list.insert(0, {
+                    "run_id": str(meta.run_id),
+                    "seed": meta.seed,
+                    "engine_type": meta.engine_type.value,
+                    "status": meta.status,
+                    "max_retries": meta.max_retries,
+                    "retry_interval_hours": meta.retry_interval_hours,
+                    "total_recovery_actions": meta.total_recovery_actions,
+                    "successful_recoveries": meta.successful_recoveries,
+                    "failed_recoveries": meta.failed_recoveries,
+                    "stopped_recoveries": meta.stopped_recoveries,
+                    "recovered_gmv": str(meta.recovered_gmv),
+                    "hours_run": 0,
+                    "started_at": meta.start_time.isoformat() if meta.start_time else None,
+                    "completed_at": meta.end_time.isoformat() if meta.end_time else None,
+                })
+
+    return {"runs": runs_list}
+
+
+def _action_to_dict(action) -> dict:
+    """Serialize a RecoveryAction dataclass for API responses."""
+    return {
+        "action_id": str(action.action_id),
+        "run_id": str(action.run_id) if action.run_id else None,
+        "payment_intent_id": str(action.payment_intent_id) if action.payment_intent_id else None,
+        "related_attempt_id": action.related_attempt_id,
+        "action_type": action.action_type.value if action.action_type else None,
+        "retry_number": action.retry_number,
+        "reason": action.reason,
+        "schedule_reason": action.schedule_reason,
+        "scheduled_for": action.scheduled_for.isoformat() if action.scheduled_for else None,
+        "executed_at": action.executed_at.isoformat() if action.executed_at else None,
+        "outcome": action.outcome.value if action.outcome else None,
+        "failure_code": action.failure_code,
+        "failure_reason": action.failure_reason,
+        "amount": str(action.amount) if action.amount else None,
+        "payment_method": action.payment_method,
+        "retry_attempt_id": action.retry_attempt_id,
+        "customer_declined": action.customer_declined,
+        "cost": str(action.cost) if action.cost else None,
+        "expected_recovery": str(action.expected_recovery) if action.expected_recovery else None,
+        "metadata_json": action.metadata_json or {},
+        "created_at": action.created_at.isoformat() if action.created_at else None,
     }

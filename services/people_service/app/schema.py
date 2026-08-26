@@ -3,6 +3,7 @@ from decimal import Decimal
 from uuid import UUID as PyUUID
 
 from sqlalchemy import (
+    Boolean,
     Date,
     DateTime,
     Float,
@@ -298,11 +299,21 @@ class RecoveryActionRow(Base):
     __tablename__ = "recovery_actions"
 
     action_id: Mapped[PyUUID] = mapped_column(UUID(), primary_key=True)
-    related_attempt_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("payment_attempts.attempt_id")
+    run_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(), ForeignKey("simulation_runs.run_id"), nullable=True
+    )
+    # The original failed payment attempt (LazerPay) — nullable because
+    # some intents are settled inline and don't produce a payment attempt.
+    related_attempt_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("payment_attempts.attempt_id"), nullable=True
+    )
+    # The payment intent that failed (People Service).
+    payment_intent_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(), ForeignKey("payment_intents.intent_id"), nullable=True
     )
     action_type: Mapped[str] = mapped_column(String(32))
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    schedule_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     scheduled_for: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -314,6 +325,21 @@ class RecoveryActionRow(Base):
     expected_recovery: Mapped[Decimal | None] = mapped_column(
         Numeric(12, 2), nullable=True
     )
+    # The retry number (1 = first retry, 2 = second, 3 = third).
+    retry_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Amount of the original failed payment.
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    # Payment method of the original attempt.
+    payment_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Failure info from the original failed attempt.
+    failure_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The attempt_id returned by LazerPay for this retry.
+    retry_attempt_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Whether the customer explicitly declined a recovery link/notification.
+    customer_declined: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Flexible metadata (bank_state, failure_timestamp, etc.).
+    metadata_json: Mapped[dict] = mapped_column(PortableJSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -345,3 +371,7 @@ Index("ix_ledger_entries_event_type", LedgerEntryRow.event_type)
 Index("ix_ledger_entries_simulation_timestamp", LedgerEntryRow.simulation_timestamp)
 Index("ix_ledger_entries_from_account_id", LedgerEntryRow.from_account_id)
 Index("ix_ledger_entries_to_account_id", LedgerEntryRow.to_account_id)
+Index("ix_recovery_actions_attempt_id", RecoveryActionRow.related_attempt_id)
+Index("ix_recovery_actions_intent_id", RecoveryActionRow.payment_intent_id)
+Index("ix_recovery_actions_outcome", RecoveryActionRow.outcome)
+Index("ix_recovery_actions_scheduled_for", RecoveryActionRow.scheduled_for)
