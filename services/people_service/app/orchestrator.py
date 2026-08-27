@@ -202,10 +202,14 @@ class Orchestrator:
             self._recovery_scheduler = RecoveryScheduler(recovery_repo)
             response_rng = self._rng.spawn("customer_response")
             self._customer_response_sim = CustomerResponseSimulator(response_rng)
+            retry_rng = self._rng.spawn("recovery_retry")
             self._recovery_executor = RecoveryActionExecutor(
                 settings=settings,
                 recovery_repo=recovery_repo,
                 customer_response_sim=self._customer_response_sim,
+                intent_repo=intent_repo,
+                ledger_repo=ledger_repo,
+                rng=retry_rng,
             )
         else:
             self._recovery_engine = None
@@ -467,6 +471,23 @@ class Orchestrator:
         # Find all FAILED payment intents
         failed_intents = self._intent_repo.find_failed()
 
+        # Build a lookup index of failed ledger entries keyed by
+        # (person_id, merchant_id, amount, payment_method) — avoids O(n*m)
+        # scan on every intent.
+        failed_entries = self._ledger_repo.find_failed(limit=200)
+        ledger_index: dict[tuple, LedgerEntry] = {}
+        for entry in failed_entries:
+            meta = entry.metadata_json or {}
+            key = (
+                meta.get("person_id"),
+                meta.get("merchant_id"),
+                str(meta.get("amount", "")),
+                meta.get("payment_method"),
+            )
+            # First match wins (earliest failure entry for this intent).
+            if key not in ledger_index:
+                ledger_index[key] = entry
+
         for intent in failed_intents:
             # Skip if a RETRY is already scheduled but not yet executed (avoid duplicates)
             existing = self._recovery_repo.find_by_intent_id(intent.intent_id)
@@ -483,29 +504,28 @@ class Orchestrator:
             if any(a.outcome == RecoveryOutcome.SUCCESS for a in existing):
                 continue
 
-            # Find the ledger entry for this failed intent to extract failure info
+            # Look up the ledger entry from the pre-built index.
+            lookup_key = (
+                str(intent.person_id),
+                str(intent.merchant_id),
+                str(intent.amount),
+                intent.payment_method,
+            )
+            entry = ledger_index.get(lookup_key)
+
             failure_code = None
             failure_reason = None
             failure_ts = current_dt
             attempt_id = None
             bank_state = "NORMAL"
 
-            # Look up the failure from ledger metadata
-            failed_entries = self._ledger_repo.find_failed(limit=200)
-            for entry in failed_entries:
+            if entry is not None:
                 meta = entry.metadata_json or {}
-                if (
-                    meta.get("person_id") == str(intent.person_id)
-                    and meta.get("merchant_id") == str(intent.merchant_id)
-                    and str(meta.get("amount", "")) == str(intent.amount)
-                    and meta.get("payment_method") == intent.payment_method
-                ):
-                    failure_code = meta.get("failure_code")
-                    failure_reason = meta.get("failure_reason")
-                    failure_ts = entry.simulation_timestamp
-                    attempt_id = meta.get("attempt_id") or entry.related_attempt_id
-                    bank_state = meta.get("bank_state", "NORMAL")
-                    break
+                failure_code = meta.get("failure_code")
+                failure_reason = meta.get("failure_reason")
+                failure_ts = entry.simulation_timestamp
+                attempt_id = meta.get("attempt_id") or entry.related_attempt_id
+                bank_state = meta.get("bank_state", "NORMAL")
 
             # Build context and decide
             attempt_info = None
@@ -756,6 +776,9 @@ class Orchestrator:
                 metadata["failure_code"] = failure_code
                 metadata["failure_reason"] = FAILURE_REASONS[failure_code]
                 metadata["failure_category"] = FAILURE_CATEGORIES[failure_code]
+                # Note: no attempt_id is set — inline-failed payments have no
+                # LazerPay attempt_id.  The recovery executor handles these
+                # via inline settlement fallback when related_attempt_id is None.
             # A FAILED payment never debits the person's account — the funds are
             # simply not moved.  Only a SETTLED payment debits.  This keeps
             # balances from drifting below zero on failed transactions.
