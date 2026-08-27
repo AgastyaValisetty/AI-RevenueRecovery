@@ -99,6 +99,41 @@ def simulation_status(request: Request) -> dict:
     return request.app.state.orchestrator.summary()
 
 
+@router.post("/simulation/nuke")
+def nuke_database(request: Request) -> dict:
+    """Drop ALL tables and recreate them empty — complete reset.
+
+    This nukes: people, accounts, banks, merchants, products, subscriptions,
+    payment intents, ledger entries, simulation runs, and recovery actions.
+
+    After nuking, a fresh orchestrator is built so the service is immediately
+    ready for a new simulation run.
+    """
+    db = request.app.state.db
+    settings = request.app.state.settings
+    config = request.app.state.sim_config
+
+    db.drop_schema()
+    db.create_schema()
+
+    # Rebuild the orchestrator with a fresh RNG (seed from config)
+    from .container import build_orchestrator as _rebuild_orchestrator
+    new_orch = _rebuild_orchestrator(
+        db,
+        seed=config.population.default_seed,
+        config=config,
+        settings=settings,
+    )
+    request.app.state.orchestrator = new_orch
+
+    summary = new_orch.summary()
+    return {
+        "status": "nuked",
+        "message": "All tables dropped and recreated. Fresh orchestrator built.",
+        "summary": summary,
+    }
+
+
 @router.get("/people")
 def list_people(request: Request) -> dict:
     orchestrator = request.app.state.orchestrator

@@ -109,6 +109,27 @@ class RecoveryActionRepository:
             ).all()
             return [_action_from_row(r) for r in rows]
 
+    def find_by_intent_ids(self, intent_ids: list[UUID]) -> dict[UUID, list[RecoveryAction]]:
+        """Batch-fetch recovery actions for multiple intents in a single query.
+
+        Returns a dict mapping intent_id → list of actions (chronological).
+        Intents with no actions are absent from the dict.
+        """
+        if not intent_ids:
+            return {}
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(RecoveryActionRow)
+                .where(RecoveryActionRow.payment_intent_id.in_(intent_ids))
+                .order_by(RecoveryActionRow.created_at.asc())
+            ).all()
+            result: dict[UUID, list[RecoveryAction]] = {}
+            for row in rows:
+                intent_id = row.payment_intent_id
+                if intent_id is not None:
+                    result.setdefault(intent_id, []).append(_action_from_row(row))
+            return result
+
     def find_by_run_id(self, run_id: UUID) -> list[RecoveryAction]:
         """Return all recovery actions for a given simulation run."""
         with self._db.session() as session:

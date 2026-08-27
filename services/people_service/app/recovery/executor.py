@@ -22,7 +22,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from ..config import Settings
-from ..domain import PaymentIntent, LedgerEntry, INTENT_SETTLED, INTENT_FAILED
+from ..domain import PaymentIntent, LedgerEntry, INTENT_SETTLED, INTENT_FAILED, now
 from ..domain import PAYMENT_SETTLED, PAYMENT_FAILED
 from ..failure_model import classify_failure, failure_probability, FAILURE_REASONS, FAILURE_CATEGORIES
 # Note: PaymentIntentRepository and LedgerRepository protocols are not imported
@@ -63,6 +63,7 @@ class RecoveryActionExecutor:
         customer_response_sim: Optional[CustomerResponseSimulator] = None,
         intent_repo: Optional[PaymentIntentRepository] = None,
         ledger_repo: Optional[LedgerRepository] = None,
+        subscription_repo=None,
         rng=None,
     ):
         self._settings = settings
@@ -70,6 +71,7 @@ class RecoveryActionExecutor:
         self._customer_response_sim = customer_response_sim
         self._intent_repo = intent_repo
         self._ledger_repo = ledger_repo
+        self._subscription_repo = subscription_repo
         self._rng = rng
 
     def execute(
@@ -127,8 +129,8 @@ class RecoveryActionExecutor:
         try:
             response = httpx.post(
                 f"{lazerpay_url}/api/payments/retry",
-                params={"attempt_id": action.related_attempt_id},
                 json={
+                    "attempt_id": action.related_attempt_id,
                     "amount": float(action.amount) if action.amount else None,
                     "payment_method": action.payment_method,
                     "simulation_timestamp": simulation_timestamp.isoformat(),
@@ -146,6 +148,16 @@ class RecoveryActionExecutor:
                 action, "lazerpay_unavailable",
                 simulation_timestamp=simulation_timestamp,
             )
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "LazerPay returned error status for retry of attempt %s: %s",
+                action.related_attempt_id,
+                exc,
+            )
+            return self._mark_failed(
+                action, "lazerpay_error",
+                simulation_timestamp=simulation_timestamp,
+            )
 
         new_attempt_id = data.get("new_attempt_id", "")
         status = data.get("status", "FAILED")
@@ -156,6 +168,20 @@ class RecoveryActionExecutor:
 
         if status in ("SETTLED", "AUTHORIZED"):
             outcome = RecoveryOutcome.SUCCESS
+            # Update the payment intent status to reflect the successful recovery
+            if self._intent_repo is not None and action.payment_intent_id is not None:
+                try:
+                    intent = self._intent_repo.find_by_id(action.payment_intent_id)
+                    if intent is not None:
+                        from dataclasses import replace
+                        updated_intent = replace(intent, status=status)
+                        self._intent_repo.save(updated_intent)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to update payment intent %s after successful recovery: %s",
+                        action.payment_intent_id,
+                        exc,
+                    )
         elif status in ("FAILED",):
             outcome = RecoveryOutcome.FAILED
         elif status in ("UNKNOWN",):
@@ -244,21 +270,27 @@ class RecoveryActionExecutor:
             logger.error(
                 "Cannot inline-retry — payment intent %s not found", intent_id
             )
-        else:
-            orig_code = action.failure_code or "UNKNOWN"
-            logger.debug(
-                "_execute_inline_retry: intent=%s retry_num=%s orig_code=%s "
-                "intent_status=%s method=%s amount=%s",
-                intent_id, action.retry_number, orig_code,
-                intent.status, intent.payment_method, intent.amount,
-            )
             return self._mark_failed(
                 action, "intent_not_found",
                 simulation_timestamp=simulation_timestamp,
             )
 
+        orig_code = action.failure_code or "UNKNOWN"
+        logger.debug(
+            "_execute_inline_retry: intent=%s retry_num=%s orig_code=%s "
+            "intent_status=%s method=%s amount=%s",
+            intent_id, action.retry_number, orig_code,
+            intent.status, intent.payment_method, intent.amount,
+        )
+
         # Re-check the person's balance.
-        balance = self._ledger_repo.balance_of(intent.person_id)
+        source_account_id = (
+            action.metadata_json.get("primary_account_id")
+            or action.metadata_json.get("source_account_id")
+            or action.metadata_json.get("person_id")
+            or str(intent.person_id)
+        )
+        balance = self._ledger_repo.balance_of(source_account_id)
 
         # Determine failure probability.  If we have an RNG, use it;
         # otherwise treat as a deterministic retry (no random failure).
@@ -274,28 +306,28 @@ class RecoveryActionExecutor:
         # On retry, we skip the balance check and just roll with reduced probability.
         is_insufficient_funds = orig_code == "INSUFFICIENT_FUNDS"
 
+        # Classify the original failure to decide how recovery should behave.
+        # Infrastructure failures (NETWORK_ERROR, TIMEOUT) are transient by
+        # nature — retrying gives a high probability of success.
+        # Bank decines (ISSUER_DECLINE, LIMIT_EXCEEDED, RISK_DECLINE) are also
+        # often temporary and recover with moderate probability.
+        orig_category = FAILURE_CATEGORIES.get(orig_code, "UNKNOWN")
+
         if is_insufficient_funds and balance < intent.amount:
-            # Genuine insolvency — can't recover.
+            # Genuine insolvency — can't recover unless balance increased.
             status = INTENT_FAILED
             failure_code = "INSUFFICIENT_FUNDS"
             failure_reason = "Customer balance insufficient at retry time"
         elif self._rng is not None:
-            # On retry, transient failures (ISSUER_DECLINE, TIMEOUT, etc.)
-            # have a lower probability of recurring — that's the whole
-            # point of retrying.  We apply a retry-adjusted probability:
-            #   - If the original failure was INSUFFICIENT_FUNDS, the balance
-            #     check above already handles it (deterministic).
-            #   - For transient codes, halve the failure probability on each
-            #     successive retry (retry 1: 0.5x, retry 2: 0.25x, retry 3: 0.125x).
+            # On retry, transient failures have a higher chance of success.
             bank_state = "NORMAL"
 
             amount_f = float(intent.amount)
             balance_f = float(balance)
 
             retry_num = action.retry_number or 1
-            # Each retry halves the transient-failure probability.
-            retry_adjustment = 0.5 ** (retry_num - 1) if retry_num > 0 else 1.0
 
+            # Base failure probability from the calibrated model.
             base_p = failure_probability(
                 intent.payment_method,
                 bank_state=bank_state,
@@ -303,25 +335,48 @@ class RecoveryActionExecutor:
                 balance=balance_f,
                 hour=simulation_timestamp.hour,
             )
-            # Only reduce transient failures — INSUFFICIENT_FUNDS was already
-            # handled above by the balance check.
-            retry_p = base_p * retry_adjustment
+
+            # Adjust failure probability based on failure type:
+            # - Infrastructure failures (NETWORK_ERROR, TIMEOUT): transient,
+            #   reduce failure probability heavily (80% recovery on retry).
+            # - Bank declinations (ISSUER_DECLINE, LIMIT_EXCEEDED, RISK_DECLINE):
+            #   moderate recovery (40% on retry 1, better on later retries).
+            # - Other failures: standard halving per retry.
+            if orig_category == "INFRASTRUCTURE":
+                # Transient infrastructure issues resolve on retry.
+                # Success probability starts at ~85% and grows with each retry.
+                retry_success_p = min(0.95, 0.85 + (0.05 * (retry_num - 1)))
+                retry_p = 1.0 - retry_success_p  # failure probability on retry
+            elif orig_category == "BANK_DECLINE":
+                # Bank-side declines can be retried with improving odds.
+                retry_adjustment = 0.4 * (0.6 ** (retry_num - 1))
+                retry_p = base_p * retry_adjustment
+            else:
+                # Standard retry adjustment: halve failure probability each retry.
+                retry_adjustment = 0.5 ** (retry_num - 1) if retry_num > 0 else 1.0
+                retry_p = base_p * retry_adjustment
+
             rng_val = self._rng.random()
 
             logger.debug(
                 "Inline retry: intent=%s retry=%d balance=%.2f amount=%.2f "
-                "base_p=%.4f retry_p=%.4f rng_val=%.4f hour=%d method=%s",
+                "orig_code=%s base_p=%.4f retry_p=%.4f rng_val=%.4f method=%s",
                 intent.intent_id, retry_num, balance_f, amount_f,
-                base_p, retry_p, rng_val, simulation_timestamp.hour,
-                intent.payment_method,
+                orig_code, base_p, retry_p, rng_val, intent.payment_method,
             )
 
             if rng_val < retry_p:
                 status = INTENT_FAILED
-                failure_code, _cat = classify_failure(
-                    self._rng, method=intent.payment_method, bank_state=bank_state
-                )
-                failure_reason = FAILURE_REASONS[failure_code]
+                # If the original was a transient error, keep it transient —
+                # if it was a bank decline, pick a new decline code.
+                if orig_category == "INFRASTRUCTURE":
+                    failure_code = orig_code
+                    failure_reason = FAILURE_REASONS.get(orig_code, "Transient error recurred")
+                else:
+                    failure_code, _cat = classify_failure(
+                        self._rng, method=intent.payment_method, bank_state=bank_state
+                    )
+                    failure_reason = FAILURE_REASONS[failure_code]
 
         executed_at = datetime.now(timezone.utc)
         new_attempt_id = str(uuid4())
@@ -351,7 +406,7 @@ class RecoveryActionExecutor:
         ledger_entry = LedgerEntry(
             entry_id=uuid4(),
             event_type=event_type,
-            from_account_id=str(intent.person_id) if status == INTENT_SETTLED else None,
+            from_account_id=source_account_id if status == INTENT_SETTLED else None,
             to_account_id=None,
             amount=intent.amount,
             simulation_timestamp=simulation_timestamp,
@@ -404,7 +459,34 @@ class RecoveryActionExecutor:
         return updated
 
     def _execute_stop(self, action: RecoveryAction) -> RecoveryAction:
-        """Mark a STOP action as executed."""
+        """Mark a STOP action as executed and cancel associated subscription if applicable."""
+        # Cancel subscription if this intent has a related_subscription_id and we have exhausted retries
+        if action.payment_intent_id is not None and self._intent_repo is not None and self._subscription_repo is not None:
+            try:
+                intent = self._intent_repo.find_by_id(action.payment_intent_id)
+                if intent is not None and intent.related_subscription_id is not None:
+                    sub = self._subscription_repo.find(intent.related_subscription_id)
+                    if sub is not None and sub.status == "ACTIVE":
+                        from dataclasses import replace
+                        # Cancel the subscription
+                        updated_sub = replace(
+                            sub,
+                            status="CANCELLED",
+                            cancelled_at=now(),
+                        )
+                        self._subscription_repo.save(updated_sub)
+                        logger.info(
+                            "CANCELLED subscription %s for intent %s after recovery stop",
+                            intent.related_subscription_id,
+                            action.payment_intent_id,
+                        )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to cancel subscription for intent %s during stop: %s",
+                    action.payment_intent_id,
+                    exc,
+                )
+
         updated = RecoveryAction(
             action_id=action.action_id,
             run_id=action.run_id,

@@ -1,8 +1,20 @@
+"""Reset all database tables (including ledger, recovery, payment attempts).
+
+Run from the services/people_service directory:
+    python reset_db.py
+"""
 import sys
 sys.path.insert(0, '.')
 from app.config import Settings
 from app.database import Database
-db = Database(Settings(db_host='localhost', db_port=5433, db_user='simulator', db_password='simulator_dev', db_name='revenue_recovery'))
-db.drop_schema()
-db.create_schema()
-print('Database reset - all tables dropped and recreated empty')
+
+def reset_database():
+    settings = Settings.from_env()
+    db = Database(settings)
+    db.drop_schema()
+    db.create_schema()
+    print('Database reset - all tables dropped and recreated empty')
+    return db
+
+if __name__ == '__main__':
+    reset_database()

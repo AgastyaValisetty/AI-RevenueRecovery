@@ -69,6 +69,11 @@ class RecoveryContextBuilder:
         bank_state: Optional[str] = None,
         failure_timestamp: Optional[datetime] = None,
         attempt_info: Optional[AttemptInfo] = None,
+        # Pre-fetched caches to avoid N+1 queries when building many contexts:
+        person_cache: Optional[dict] = None,
+        merchant_cache: Optional[dict] = None,
+        balance_cache: Optional[dict] = None,
+        prior_actions_cache: Optional[dict[UUID, list]] = None,
     ) -> RecoveryContext:
         """Build a full context for a FAILED PaymentIntent.
 
@@ -76,8 +81,15 @@ class RecoveryContextBuilder:
         ``failure_timestamp`` are read from the RecoveryAction that first
         captured this failure — they represent observed data, not hidden
         simulator state.
+
+        ``person_cache``, ``merchant_cache``, and ``balance_cache`` allow the
+        caller to pass pre-fetched data so that batch context-building avoids
+        N+1 DB queries.
         """
-        person = self._person_repo.find_by_id(intent.person_id)
+        if person_cache is not None:
+            person = person_cache.get(intent.person_id)
+        else:
+            person = self._person_repo.find_by_id(intent.person_id)
         if person is None:
             person_info = PersonInfo(
                 person_id=str(intent.person_id),
@@ -107,12 +119,15 @@ class RecoveryContextBuilder:
                 primary_account_id=str(person.primary_account_id),
             )
 
-        # Merchant
-        merchant_match = None
-        for m in self._merchant_repo.find_all():
-            if m.merchant_id == intent.merchant_id:
-                merchant_match = m
-                break
+        # Merchant — use cache if provided, otherwise fetch from repo
+        if merchant_cache is not None:
+            merchant_match = merchant_cache.get(intent.merchant_id)
+        else:
+            merchant_match = None
+            for m in self._merchant_repo.find_all():
+                if m.merchant_id == intent.merchant_id:
+                    merchant_match = m
+                    break
         if merchant_match is None:
             merchant_info = MerchantInfo(
                 merchant_id=str(intent.merchant_id),
@@ -126,8 +141,13 @@ class RecoveryContextBuilder:
                 merchant_type=merchant_match.merchant_type,
             )
 
-        # Current balance
-        balance = self._ledger_repo.balance_of(person.primary_account_id) if person else Decimal("0")
+        # Current balance — use cache if provided, otherwise query
+        if balance_cache is not None:
+            balance = balance_cache.get(intent.person_id, Decimal("0"))
+        elif person:
+            balance = self._ledger_repo.balance_of(person.primary_account_id)
+        else:
+            balance = Decimal("0")
 
         # Subscription if relevant
         sub_info: Optional[SubscriptionInfo] = None
@@ -154,8 +174,11 @@ class RecoveryContextBuilder:
                     consecutive_failures=sub.consecutive_failures,
                 )
 
-        # Prior recovery actions for this intent
-        prior_actions = self._recovery_repo.find_by_intent_id(intent.intent_id)
+        # Prior recovery actions — use pre-fetched batch result if provided
+        if prior_actions_cache is not None:
+            prior_actions = prior_actions_cache.get(intent.intent_id, [])
+        else:
+            prior_actions = self._recovery_repo.find_by_intent_id(intent.intent_id)
         prior_infos: list[PriorRecovery] = []
         retry_count = 0
         customer_declined = False

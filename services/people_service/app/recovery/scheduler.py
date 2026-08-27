@@ -70,6 +70,7 @@ class RecoveryScheduler:
                 metadata_json={
                     "intent_id": context.intent_id,
                     "person_id": context.person.person_id,
+                    "primary_account_id": context.person.primary_account_id,
                     "merchant_id": context.merchant.merchant_id,
                     "failure_timestamp": (
                         context.failure_timestamp.isoformat()
@@ -103,6 +104,7 @@ class RecoveryScheduler:
                 metadata_json={
                     "intent_id": context.intent_id,
                     "person_id": context.person.person_id,
+                    "primary_account_id": context.person.primary_account_id,
                     "merchant_id": context.merchant.merchant_id,
                     "failure_timestamp": (
                         context.failure_timestamp.isoformat()

@@ -18,6 +18,7 @@ flows to merchants and money circulates through the ledger.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -209,6 +210,7 @@ class Orchestrator:
                 customer_response_sim=self._customer_response_sim,
                 intent_repo=intent_repo,
                 ledger_repo=ledger_repo,
+                subscription_repo=subscription_repo,
                 rng=retry_rng,
             )
         else:
@@ -449,27 +451,45 @@ class Orchestrator:
 
         Two steps:
         1. Execute due RETRY actions (scheduled_for <= current time).
+           HTTP calls to LazerPay are parallelized via ThreadPoolExecutor.
         2. Detect new FAILED intents from this hour's settlement,
            run the engine, and schedule new recovery actions.
         """
         if self._recovery_repo is None:
             return
 
-        # Step 1: execute due retry actions
+        # Step 1: execute due retry actions (parallel HTTP calls)
         due_actions = self._recovery_scheduler.find_due_actions(current_dt)
-        for action in due_actions:
-            self._recovery_executor.execute(action, current_dt)
+        if due_actions:
+            with ThreadPoolExecutor(max_workers=min(12, len(due_actions))) as pool:
+                futures = [
+                    pool.submit(self._recovery_executor.execute, action, current_dt)
+                    for action in due_actions
+                ]
+                for future in as_completed(futures):
+                    future.result()
 
         # Step 2: detect new failures and create recovery actions
         self._detect_and_schedule_failures(current_dt)
 
     def _detect_and_schedule_failures(self, current_dt: datetime) -> None:
-        """Scan for FAILED payment intents without recovery actions and schedule."""
+        """Scan for FAILED payment intents and schedule recovery actions.
+
+        Optimized to avoid N+1 DB queries:
+        - Pre-fetches prior recovery actions for ALL failed intents in one query
+          (instead of find_by_intent_id per-intent).
+        - Caches all people and merchants once per call (instead of querying
+          per-intent inside build_for_intent).
+        - Batch-fetches balances in a single query.
+        - Skips intents with STOP/SUCCESS actions before building context.
+        """
         if self._recovery_repo is None or self._recovery_engine is None:
             return
 
-        # Find all FAILED payment intents
-        failed_intents = self._intent_repo.find_failed()
+        # Find FAILED payment intents that still need recovery work.
+        failed_intents = self._intent_repo.find_actionable_failed()
+        if not failed_intents:
+            return
 
         # Build a lookup index of failed ledger entries keyed by
         # (person_id, merchant_id, amount, payment_method) — avoids O(n*m)
@@ -488,9 +508,29 @@ class Orchestrator:
             if key not in ledger_index:
                 ledger_index[key] = entry
 
+        # --- BATCH pre-fetch: prior recovery actions for all intents at once ---
+        intent_ids = [i.intent_id for i in failed_intents]
+        prior_actions_map = self._recovery_repo.find_by_intent_ids(intent_ids)
+
+        # --- BATCH pre-fetch: all people and merchants (cached for context build) ---
+        all_people = self._person_repo.find_all()
+        person_cache = {p.person_id: p for p in all_people}
+        all_merchants = self._merchant_repo.find_all()
+        merchant_cache = {m.merchant_id: m for m in all_merchants}
+
+        # --- BATCH pre-fetch: balances for all people in a single query ---
+        account_ids = [p.primary_account_id for p in all_people]
+        balance_cache_raw = self._ledger_repo.balances_for_accounts(account_ids) if account_ids else {}
+        balance_cache = {
+            p.person_id: balance_cache_raw.get(p.primary_account_id, Decimal("0"))
+            for p in all_people
+        }
+
         for intent in failed_intents:
+            # Check prior actions from the pre-fetched batch map (no per-intent DB query)
+            existing = prior_actions_map.get(intent.intent_id, [])
+
             # Skip if a RETRY is already scheduled but not yet executed (avoid duplicates)
-            existing = self._recovery_repo.find_by_intent_id(intent.intent_id)
             if any(
                 a.outcome == RecoveryOutcome.PENDING
                 and a.action_type == RecoveryActionType.RETRY
@@ -527,7 +567,7 @@ class Orchestrator:
                 attempt_id = meta.get("attempt_id") or entry.related_attempt_id
                 bank_state = meta.get("bank_state", "NORMAL")
 
-            # Build context and decide
+            # Build context and decide — pass pre-fetched caches to avoid N+1 queries
             attempt_info = None
             if attempt_id:
                 from .recovery.context import AttemptInfo
@@ -558,6 +598,10 @@ class Orchestrator:
                 bank_state=bank_state,
                 failure_timestamp=failure_ts,
                 attempt_info=attempt_info,
+                person_cache=person_cache,
+                merchant_cache=merchant_cache,
+                balance_cache=balance_cache,
+                prior_actions_cache=prior_actions_map,
             )
 
             decision = self._recovery_engine.decide(context)
@@ -588,19 +632,36 @@ class Orchestrator:
         - person's income bracket, age group, spending profile
         - time of day, day type (weekday/weekend)
         - current balance (balance-aware scaling)
+
+        Uses ThreadPoolExecutor with per-person deterministic RNG seeds so
+        each person's spending decision is reproducible yet independent.
         """
         people = self._person_repo.find_all()
+        if not people:
+            return
+
         account_ids = [p.primary_account_id for p in people]
         balances = self._ledger_repo.balances_for_accounts(account_ids)
 
-        entries = []
-        for person in people:
-            balance = balances.get(person.primary_account_id, Decimal("0"))
-            entry = self._spending_engine.daily_cost(
-                person, current_dt, day_type, current_balance=balance
-            )
-            if entry is not None:
-                entries.append(entry)
+        # Pre-generate per-person RNG seeds (sequential, thread-safe)
+        person_seeds = [
+            self._rng.spawn(f"living_cost_{p.person_id}") for p in people
+        ]
+
+        # Parallel execution — each worker gets its own deterministic RNG
+        with ThreadPoolExecutor(max_workers=min(12, len(people))) as pool:
+            futures = [
+                pool.submit(
+                    self._spending_engine.daily_cost,
+                    person, current_dt, day_type,
+                    current_balance=balances.get(person.primary_account_id, Decimal("0")),
+                    rng=seed,
+                )
+                for person, seed in zip(people, person_seeds)
+            ]
+            # Preserve original order for deterministic downstream processing
+            entries = [f.result() for f in futures if f.result() is not None]
+
         if entries:
             self._ledger_repo.append(entries)
 
@@ -612,6 +673,9 @@ class Orchestrator:
         — if the person has sufficient balance the intent is ``SETTLED``,
         otherwise it ``FAILED``.  Subscriptions that fail consecutively
         are cancelled.
+
+        Uses ThreadPoolExecutor with per-subscription RNG seeds so each
+        intent's payment-method selection is reproducible yet independent.
         """
         subscriptions = self._subscription_repo.find_due_on(on_date)
         if not subscriptions:
@@ -624,13 +688,23 @@ class Orchestrator:
             for p in self._person_repo.find_all()
         }
 
-        # Build intents (GST applied inside SubscriptionEngine.build_intent)
-        intents = [
-            self._subscription_engine.build_intent(
-                sub, current_dt, prefs.get(sub.person_id)
-            )
-            for sub in subscriptions
+        # Pre-generate per-subscription RNG seeds (sequential, thread-safe)
+        sub_seeds = [
+            self._rng.spawn(f"sub_bill_{s.subscription_id}") for s in subscriptions
         ]
+
+        # Build intents in parallel (GST applied inside SubscriptionEngine.build_intent)
+        with ThreadPoolExecutor(max_workers=min(12, len(subscriptions))) as pool:
+            futures = [
+                pool.submit(
+                    self._subscription_engine.build_intent,
+                    sub, current_dt, prefs.get(sub.person_id), rng=seed
+                )
+                for sub, seed in zip(subscriptions, sub_seeds)
+            ]
+            # Preserve original order for deterministic downstream processing
+            intents = [f.result() for f in futures]
+
         self._intent_repo.add(intents)
 
         # Advance billing dates for all due subscriptions (monthly cycle)
@@ -652,11 +726,17 @@ class Orchestrator:
         During business hours the EcommerceEngine decides whether each person
         shops.  The PurchaseDecision amount already includes 18% GST (applied
         in the engine).  Intents are settled inline immediately.
+
+        Uses ThreadPoolExecutor with per-person deterministic RNG seeds so
+        each person's purchase decision is reproducible yet independent.
         """
         if self._ecommerce_engine is None:
             return
 
         people = self._person_repo.find_all()
+        if not people:
+            return
+
         merchants = self._merchant_repo.find_all()
         products = self._product_repo.find_all_products()
         account_ids = [p.primary_account_id for p in people]
@@ -664,22 +744,43 @@ class Orchestrator:
 
         is_salary_day = self._is_salary_day(current_dt.date())
 
+        # Pre-generate per-person RNG seeds (sequential, thread-safe)
+        person_seeds = [
+            self._rng.spawn(f"ecom_{p.person_id}") for p in people
+        ]
+        # Pre-generate intent seeds too (avoids non-deterministic spawn ordering
+        # from as_completed which would break reproducibility).
+        intent_seed_map = {
+            p.person_id: self._rng.spawn(f"ecom_intent_{p.person_id}") for p in people
+        }
+
         intents = []
-        for person in people:
-            balance = balances.get(person.primary_account_id, Decimal("0"))
-            decision = self._ecommerce_engine.generate_purchase(
-                person,
-                merchants,
-                products,
-                current_dt,
-                balance,
-                is_salary_day,
-            )
-            if decision is not None:
-                intent = self._subscription_engine.build_intent_from_decision(
-                    decision, current_dt, person.payment_preferences_json
+        # Parallel execution — each worker gets its own deterministic RNG
+        with ThreadPoolExecutor(max_workers=min(12, len(people))) as pool:
+            future_to_person = {}
+            for person, seed in zip(people, person_seeds):
+                balance = balances.get(person.primary_account_id, Decimal("0"))
+                future = pool.submit(
+                    self._ecommerce_engine.generate_purchase,
+                    person,
+                    merchants,
+                    products,
+                    current_dt,
+                    balance,
+                    is_salary_day,
+                    rng=seed,
                 )
-                intents.append(intent)
+                future_to_person[future] = person
+
+            # Preserve original order for deterministic downstream processing
+            for future, person in future_to_person.items():
+                decision = future.result()
+                if decision is not None:
+                    intent = self._subscription_engine.build_intent_from_decision(
+                        decision, current_dt, person.payment_preferences_json,
+                        rng=intent_seed_map[person.person_id],
+                    )
+                    intents.append(intent)
 
         if intents:
             self._intent_repo.add(intents)
@@ -712,41 +813,46 @@ class Orchestrator:
 
         Updated intents are persisted so revenue queries see ``SETTLED``
         intents.
+
+        Uses ThreadPoolExecutor with per-intent deterministic RNG seeds so
+        each intent's failure draw is reproducible yet independent.
         """
         from dataclasses import replace
 
-        account_ids = [intent.person_id for intent in intents]
-        people = self._person_repo.find_all()
-        balance_map = {}
-        for p in people:
-            balance_map[p.person_id] = self._ledger_repo.balance_of(
-                p.primary_account_id
-            )
+        if not intents:
+            return
+
+        # Only fetch people relevant to these intents (not ALL people).
+        person_ids = list({intent.person_id for intent in intents})
+        people = self._person_repo.find_by_ids(person_ids)
+        people_dict = {p.person_id: p for p in people}
+
+        # Batch-fetch balances in a single query (instead of one per person).
+        account_ids = [p.primary_account_id for p in people]
+        balances = self._ledger_repo.balances_for_accounts(account_ids) if account_ids else {}
 
         # Bank state feeds P(failure) (degraded/outage banks fail more).
         bank = self._bank_repo.find_by_name("RupeeBank")
         bank_state = bank.current_state if bank else "NORMAL"
 
-        ledger_entries = []
-        updated_intents = []
-        for intent in intents:
-            balance = balance_map.get(intent.person_id, Decimal("0"))
-            person = next(
-                (p for p in people if p.person_id == intent.person_id), None
-            )
-            debit_account = (
-                str(person.primary_account_id) if person else None
-            )
+        # Pre-generate per-intent RNG seeds (sequential, thread-safe)
+        intent_seeds = [
+            self._rng.spawn(f"intent_{i.intent_id}") for i in intents
+        ]
 
+        # Parallelize the per-intent failure decision
+        results: list[tuple[PaymentIntent, str, str | None]] = []
+
+        def _decide(intent: PaymentIntent, intent_rng: SimulationRNG) -> tuple[PaymentIntent, str, str | None]:
+            person = people_dict.get(intent.person_id)
+            balance = balances.get(person.primary_account_id, Decimal("0")) if person else Decimal("0")
             amount_f = float(intent.amount)
             balance_f = float(balance)
 
-            failure_code = None
             if balance < intent.amount:
                 # Real insolvency — deterministic, dominant CUSTOMER_STATE bucket.
-                status = INTENT_FAILED
-                failure_code = "INSUFFICIENT_FUNDS"
-            elif self._rng.random() < failure_probability(
+                return intent, INTENT_FAILED, "INSUFFICIENT_FUNDS"
+            elif intent_rng.random() < failure_probability(
                 intent.payment_method,
                 bank_state=bank_state,
                 amount=amount_f,
@@ -755,10 +861,26 @@ class Orchestrator:
             ):
                 status = INTENT_FAILED
                 failure_code, _cat = classify_failure(
-                    self._rng, method=intent.payment_method, bank_state=bank_state
+                    intent_rng, method=intent.payment_method, bank_state=bank_state
                 )
+                return intent, status, failure_code
             else:
-                status = INTENT_SETTLED
+                return intent, INTENT_SETTLED, None
+
+        with ThreadPoolExecutor(max_workers=min(12, len(intents))) as pool:
+            futures = [
+                pool.submit(_decide, intent, seed)
+                for intent, seed in zip(intents, intent_seeds)
+            ]
+            # Preserve original order for deterministic downstream processing
+            results = [f.result() for f in futures]
+
+        # Build ledger entries and update intents (sequential DB writes)
+        ledger_entries = []
+        updated_intents = []
+        for intent, status, failure_code in results:
+            person = people_dict.get(intent.person_id)
+            debit_account = str(person.primary_account_id) if person else None
 
             updated = replace(intent, status=status)
             updated_intents.append(updated)
@@ -782,10 +904,7 @@ class Orchestrator:
             # A FAILED payment never debits the person's account — the funds are
             # simply not moved.  Only a SETTLED payment debits.  This keeps
             # balances from drifting below zero on failed transactions.
-            if status == INTENT_SETTLED:
-                debit_from = debit_account
-            else:
-                debit_from = None  # no money leaves the account on failure
+            debit_from = debit_account if status == INTENT_SETTLED else None
             ledger_entries.append(LedgerEntry(
                 entry_id=uuid4(),
                 event_type=event_type,
@@ -799,8 +918,7 @@ class Orchestrator:
             ))
 
         if updated_intents:
-            for ui in updated_intents:
-                self._intent_repo.save(ui)
+            self._intent_repo.save_many(updated_intents)
         if ledger_entries:
             self._ledger_repo.append(ledger_entries)
 

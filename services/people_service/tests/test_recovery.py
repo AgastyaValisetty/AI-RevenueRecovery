@@ -31,6 +31,7 @@ from app.domain import (
     INTENT_SETTLED,
     PAYMENT_FAILED,
     PAYMENT_SETTLED,
+    SALARY_DEPOSIT,
     PaymentIntent,
     LedgerEntry,
 )
@@ -550,6 +551,131 @@ class TestRecoveryActionRepository:
         counts = repo.count_by_outcome()
         assert counts.get(RecoveryOutcome.SUCCESS.value, 0) == 2
         assert counts.get(RecoveryOutcome.FAILED.value, 0) == 1
+
+
+class TestActionableFailedIntents:
+    """Verify the recovery loop only loads failed intents that need work."""
+
+    def test_find_actionable_failed_excludes_terminal_and_pending_work(self, db):
+        intent_repo = PaymentIntentRepository(db)
+        recovery_repo = RecoveryActionRepository(db)
+
+        no_action = _make_intent()
+        failed_retry = _make_intent()
+        pending_retry = _make_intent()
+        stopped = _make_intent()
+        recovered = _make_intent()
+        settled = _make_intent(status=INTENT_SETTLED)
+        intent_repo.add([
+            no_action,
+            failed_retry,
+            pending_retry,
+            stopped,
+            recovered,
+            settled,
+        ])
+
+        for intent, action_type, outcome in [
+            (failed_retry, RecoveryActionType.RETRY, RecoveryOutcome.FAILED),
+            (pending_retry, RecoveryActionType.RETRY, RecoveryOutcome.PENDING),
+            (stopped, RecoveryActionType.STOP, RecoveryOutcome.STOPPED),
+            (recovered, RecoveryActionType.RETRY, RecoveryOutcome.SUCCESS),
+        ]:
+            recovery_repo.add(RecoveryAction(
+                action_id=uuid4(),
+                run_id=None,
+                related_attempt_id=None,
+                payment_intent_id=intent.intent_id,
+                retry_number=1 if action_type == RecoveryActionType.RETRY else None,
+                action_type=action_type,
+                reason="retry_scheduled",
+                schedule_reason="retry_scheduled",
+                scheduled_for=SIM_TS,
+                executed_at=SIM_TS if outcome != RecoveryOutcome.PENDING else None,
+                outcome=outcome,
+                failure_code="NETWORK_ERROR",
+                failure_reason="Network error",
+                amount=intent.amount,
+                payment_method=intent.payment_method,
+                metadata_json={},
+                created_at=SIM_TS,
+            ))
+
+        actionable_ids = {
+            intent.intent_id for intent in intent_repo.find_actionable_failed()
+        }
+
+        assert actionable_ids == {no_action.intent_id, failed_retry.intent_id}
+
+
+class TestRecoveryActionExecutor:
+    """Verify scheduled retry execution behavior."""
+
+    class FixedRng:
+        def __init__(self, value: float):
+            self.value = value
+
+        def random(self):
+            return self.value
+
+    def test_inline_retry_recovers_transient_failure_and_debits_primary_account(self, db):
+        intent_repo = PaymentIntentRepository(db)
+        ledger_repo = LedgerRepository(db)
+        recovery_repo = RecoveryActionRepository(db)
+
+        intent = _make_intent()
+        account_id = uuid4()
+        intent_repo.add([intent])
+        ledger_repo.append([
+            LedgerEntry(
+                entry_id=uuid4(),
+                event_type=SALARY_DEPOSIT,
+                from_account_id=None,
+                to_account_id=account_id,
+                amount=Decimal("1000.00"),
+                simulation_timestamp=SIM_TS - timedelta(hours=1),
+                metadata_json={},
+            )
+        ])
+
+        action = RecoveryAction(
+            action_id=uuid4(),
+            run_id=None,
+            related_attempt_id=None,
+            payment_intent_id=intent.intent_id,
+            retry_number=1,
+            action_type=RecoveryActionType.RETRY,
+            reason="retry_scheduled",
+            schedule_reason="retry_scheduled",
+            scheduled_for=SIM_TS,
+            executed_at=None,
+            outcome=RecoveryOutcome.PENDING,
+            failure_code="NETWORK_ERROR",
+            failure_reason="Network error",
+            amount=intent.amount,
+            payment_method=intent.payment_method,
+            metadata_json={
+                "person_id": str(intent.person_id),
+                "primary_account_id": str(account_id),
+            },
+            created_at=SIM_TS,
+        )
+        recovery_repo.add(action)
+
+        executor = RecoveryActionExecutor(
+            settings=Settings(lazerpay_url="http://lazerpay_service:8001"),
+            recovery_repo=recovery_repo,
+            intent_repo=intent_repo,
+            ledger_repo=ledger_repo,
+            rng=self.FixedRng(0.5),
+        )
+
+        updated = executor.execute(action, SIM_TS)
+        stored_intent = intent_repo.find_by_id(intent.intent_id)
+
+        assert updated.outcome == RecoveryOutcome.SUCCESS
+        assert stored_intent.status == INTENT_SETTLED
+        assert ledger_repo.balance_of(account_id) == Decimal("0.00")
 
 
 # --------------------------------------------------------------------------- #

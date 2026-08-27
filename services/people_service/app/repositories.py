@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import extract, func, select
+from sqlalchemy import and_, exists, extract, func, or_, select
 
 from .database import Database
 from .domain import (
@@ -27,6 +27,7 @@ from .schema import (
     ProductRow,
     SimulationRunRow,
     SubscriptionRow,
+    RecoveryActionRow,
 )
 
 
@@ -403,6 +404,18 @@ class PersonRepository:
             row = session.get(PersonRow, person_id)
             return _person_from_row(row) if row else None
 
+    def find_by_ids(self, person_ids: list[UUID]) -> list[Person]:
+        """Fetch multiple people by ID in a single query.
+        Much faster than calling find_by_id per-person in a loop.
+        """
+        if not person_ids:
+            return []
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(PersonRow).where(PersonRow.person_id.in_(person_ids))
+            ).all()
+            return [_person_from_row(r) for r in rows]
+
 
 class MerchantRepository:
     def __init__(self, db: Database):
@@ -541,6 +554,33 @@ class PaymentIntentRepository:
             ).all()
             return [_intent_from_row(r) for r in rows]
 
+    def find_actionable_failed(self) -> list[PaymentIntent]:
+        """Return FAILED intents that still need recovery scheduling.
+
+        Excludes intents that already have a pending retry, a STOP action, or a
+        successful recovery. This keeps the hourly recovery loop from repeatedly
+        loading terminal failures as the simulation grows.
+        """
+        blocking_action = exists().where(
+            RecoveryActionRow.payment_intent_id == PaymentIntentRow.intent_id,
+            or_(
+                and_(
+                    RecoveryActionRow.action_type == "RETRY",
+                    RecoveryActionRow.outcome == "PENDING",
+                ),
+                RecoveryActionRow.action_type == "STOP",
+                RecoveryActionRow.outcome == "SUCCESS",
+            ),
+        )
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(PaymentIntentRow).where(
+                    PaymentIntentRow.status == "FAILED",
+                    ~blocking_action,
+                )
+            ).all()
+            return [_intent_from_row(r) for r in rows]
+
     def find_by_id(self, intent_id: UUID) -> PaymentIntent | None:
         """Find a payment intent by its UUID."""
         with self._db.session() as session:
@@ -550,6 +590,20 @@ class PaymentIntentRepository:
     def save(self, intent: PaymentIntent) -> None:
         with self._db.session() as session:
             session.merge(_intent_to_row(intent))
+
+    def save_many(self, intents: list[PaymentIntent]) -> None:
+        """Persist multiple payment intents in a single DB session.
+        Replaces N individual sessions with a single batched transaction.
+        """
+        if not intents:
+            return
+        with self._db.session() as session:
+            for intent in intents:
+                existing = session.get(PaymentIntentRow, intent.intent_id)
+                if existing is not None:
+                    existing.status = intent.status
+                else:
+                    session.add(_intent_to_row(intent))
 
     def settled_by_merchant(self, merchant_id) -> list[PaymentIntent]:
         """Return all SETTLED payment intents for a given merchant."""
@@ -711,6 +765,4 @@ class LedgerRepository:
                 debits = debit_map.get(str_id, Decimal(0))
                 balances[original_id] = Decimal(credits) - Decimal(debits)
             return balances
-
-
 

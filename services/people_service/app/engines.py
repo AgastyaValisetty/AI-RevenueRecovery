@@ -126,6 +126,7 @@ class SpendingEngine:
         person: Person,
         on_date: date,
         current_balance: Decimal | None = None,
+        rng: SimulationRNG | None = None,
     ) -> Decimal:
         """Compute the percentage of salary to spend on a given day.
 
@@ -208,7 +209,7 @@ class SpendingEngine:
 
         # Random variation (Gaussian noise)
         if cfg.random_variation_std > 0:
-            noise = self._rng.normalvariate(0, cfg.random_variation_std)
+            noise = (rng or self._rng).normalvariate(0, cfg.random_variation_std)
             base = max(0.0, base * (1 + noise))
 
         # Clamp
@@ -222,6 +223,7 @@ class SpendingEngine:
         on: datetime,
         day_type: str,
         current_balance: Decimal | None = None,
+        rng: SimulationRNG | None = None,
     ) -> LedgerEntry | None:
         """Generate a living-cost ledger entry for a person on a given day.
 
@@ -229,7 +231,7 @@ class SpendingEngine:
         salary history (edge case — shouldn't normally happen).
         """
         percentage = self.daily_spend_percentage(
-            person, on.date(), current_balance
+            person, on.date(), current_balance, rng=rng
         )
         amount = (
             person.salary * percentage / Decimal(100)
@@ -251,7 +253,7 @@ class SpendingEngine:
             if total <= 0:
                 return None
 
-        category = self._rng.choice(self._config.spending.category_list)
+        category = (rng or self._rng).choice(self._config.spending.category_list)
         return LedgerEntry(
             entry_id=uuid4(),
             event_type=LIVING_COST,
@@ -298,24 +300,25 @@ class SubscriptionEngine:
         )
         return (amount + gst).quantize(_MONEY, rounding=ROUND_HALF_UP)
 
-    def _pick_method(self, preferences: dict | None) -> str:
+    def _pick_method(self, preferences: dict | None, rng: SimulationRNG | None = None) -> str:
         """Sample a payment method using the person's stored weighted
         preferences (UPI-dominated in India), falling back to a sensible
         default split when no preferences are available."""
+        _rng = rng or self._rng
         if preferences:
             options = ["UPI", "CARD", "NETBANKING"]
             weights = [
                 max(0.0, float(preferences.get(m, 0.0))) for m in options
             ]
             if sum(weights) > 0:
-                return self._rng.choices(options, weights=weights, k=1)[0]
+                return _rng.choices(options, weights=weights, k=1)[0]
         # Uniform fallback (matches prior default behaviour)
-        return self._rng.choice(["UPI", "CARD", "NETBANKING"])
+        return _rng.choice(["UPI", "CARD", "NETBANKING"])
 
     def build_intent(
-        self, subscription: Subscription, on: datetime, preferences: dict | None = None
+        self, subscription: Subscription, on: datetime, preferences: dict | None = None, rng: SimulationRNG | None = None
     ) -> PaymentIntent:
-        payment_method = self._pick_method(preferences)
+        payment_method = self._pick_method(preferences, rng=rng)
         gross_amount = self._apply_gst(subscription.amount)
         return PaymentIntent(
             intent_id=uuid4(),
@@ -331,10 +334,10 @@ class SubscriptionEngine:
         )
 
     def build_intent_from_decision(
-        self, decision: PurchaseDecision, on: datetime, preferences: dict | None = None
+        self, decision: PurchaseDecision, on: datetime, preferences: dict | None = None, rng: SimulationRNG | None = None
     ) -> PaymentIntent:
         """Build a PaymentIntent from an e-commerce PurchaseDecision."""
-        payment_method = self._pick_method(preferences)
+        payment_method = self._pick_method(preferences, rng=rng)
         return PaymentIntent(
             intent_id=uuid4(),
             person_id=decision.person_id,
@@ -374,12 +377,14 @@ class EcommerceEngine:
         on: datetime,
         current_balance: Decimal,
         is_salary_day: bool,
+        rng: SimulationRNG | None = None,
     ) -> PurchaseDecision | None:
         """Determine if a person makes an e-commerce purchase this hour.
 
         Returns a :class:`PurchaseDecision` if the person shops, ``None`` otherwise.
         """
         cfg = self._config.ecommerce
+        _rng = rng or self._rng
 
         # Base probability from config
         base_prob = cfg.shop_probability_by_profile.get(
@@ -418,7 +423,7 @@ class EcommerceEngine:
         base_prob *= age_mult
 
         # Check if person shops
-        if not self._rng.chance(base_prob):
+        if not _rng.chance(base_prob):
             return None
 
         # Filter to one-time products (e-commerce purchases)
@@ -436,7 +441,7 @@ class EcommerceEngine:
         # Select a merchant (weighted by merchant_split)
         merchant_names = list(cfg.merchant_split.keys())
         merchant_weights = list(cfg.merchant_split.values())
-        chosen_merchant_name = self._rng.choices(
+        chosen_merchant_name = _rng.choices(
             merchant_names, weights=merchant_weights, k=1
         )[0]
 
@@ -449,16 +454,16 @@ class EcommerceEngine:
         if not matching_products:
             matching_products = one_time_products
 
-        product = self._rng.choice(matching_products)
+        product = _rng.choice(matching_products)
 
         # Sample order value bracket
-        bracket = self._rng.choices(
+        bracket = _rng.choices(
             cfg.order_value_brackets,
             weights=[b.weight for b in cfg.order_value_brackets],
             k=1,
         )[0]
         # Draw uniform within bracket
-        amount = self._rng.uniform(float(bracket.min), float(bracket.max))
+        amount = _rng.uniform(float(bracket.min), float(bracket.max))
 
         # Cap at max fraction of current balance
         balance_cap = float(current_balance) * cfg.max_order_pct_of_balance
