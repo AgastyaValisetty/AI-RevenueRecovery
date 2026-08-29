@@ -12,3 +12,5 @@ dummy-frontend-2/
 node_modules/
 #docker-compose up -d postgres
 services/people_service/nul
+big_man.md
+plans/
