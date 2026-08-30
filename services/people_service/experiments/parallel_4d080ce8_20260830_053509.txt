@@ -1,0 +1,48 @@
+========================================================================
+SARA Parallel Experiment Report — ID: 4d080ce8
+========================================================================
+
+BASELINE RUN
+  Cases:              12
+  Recovered:          5
+  Recovery value:     37900.56 INR
+  Recovery rate:      41.67%
+  Retries:            17
+  Wasted retries:     12
+  Outreach actions:   0
+  Mean TTR:           23316.79 h
+  Stops:              2
+  Correct stops:      2
+  Duplicate risks:    0
+  Total cost:         42.50 INR
+  Incentive cost:     0 INR
+  Net recovered:      37858.06 INR
+
+SMART AGENT RUN
+  Cases:              12
+  Recovered:          5
+  Recovery value:     23958.55 INR
+  Recovery rate:      41.67%
+  Retries:            8
+  Wasted retries:     3
+  Outreach actions:   0
+  Mean TTR:           23315.79 h
+  Stops:              3
+  Correct stops:      3
+  Duplicate risks:    0
+  Total cost:         20.00 INR
+  Incentive cost:     0 INR
+  Net recovered:      23938.55 INR
+
+LIFT
+  Incremental:        -13919.51 INR
+  Rate lift:          +0.00 pp
+  Wasted retry reduction: 9
+  TTR improvement:    1.0 h
+  Stop precision lift: +0.0000
+  Cost savings:       22.50 INR
+  Duplicate risk delta: 0
+
+Notes: Parallel experiment 4d080ce8: schemas=[exp_4d080ce8_baseline, exp_4d080ce8_smart], seed=42, people=100, hours=48. Both engines completed successfully. Smart Agent underperformed baseline by 13919.51 INR (+0.00 pp recovery rate). Wasted retries reduced by 9 (12 → 3). Zero duplicate-risk incidents in Smart Agent run.
+
+========================================================================

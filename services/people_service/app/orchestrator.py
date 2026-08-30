@@ -62,6 +62,7 @@ from .recovery import (
     RecoveryActionRepository,
     RecoveryActionType,
     RecoveryContextBuilder,
+    RecoveryDecisionEngine,
     RecoveryOutcome,
     RecoveryRunMetadata,
     RecoveryRunTracker,
@@ -166,6 +167,7 @@ class Orchestrator:
         sim_run_repo: SimulationRunRepository | None = None,
         recovery_repo: RecoveryActionRepository | None = None,
         settings=None,
+        recovery_engine: RecoveryDecisionEngine | None = None,
     ) -> None:
         self._bank_repo = bank_repo
         self._person_repo = person_repo
@@ -191,7 +193,8 @@ class Orchestrator:
         self._settings = settings
         self._recovery_run_id: UUID | None = None
         if recovery_repo is not None:
-            self._recovery_engine = BaselineRecoveryEngine()
+            # Use injected engine (e.g. SmartRecoveryEngine) or default to baseline
+            self._recovery_engine = recovery_engine or BaselineRecoveryEngine()
             self._recovery_context_builder = RecoveryContextBuilder(
                 person_repo=person_repo,
                 merchant_repo=merchant_repo,
@@ -276,13 +279,19 @@ class Orchestrator:
         # Create a recovery run for traceability — persist it to simulation_runs
         # so that the FK constraint on recovery_actions.run_id is satisfied.
         if self._recovery_repo is not None:
+            # Detect the actual engine type (baseline or AI agent)
+            if isinstance(self._recovery_engine, BaselineRecoveryEngine):
+                engine_type = RecoveryEngineType.BASELINE
+            else:
+                engine_type = RecoveryEngineType.AI_AGENT
+
             recovery_run = RecoveryRunMetadata(
                 run_id=uuid4(),
                 seed=self._rng.seed or 42,
-                engine_type=RecoveryEngineType.BASELINE,
+                engine_type=engine_type,
                 start_time=now(),
-                max_retries=3,
-                retry_interval_hours=12,
+                max_retries=getattr(self._recovery_engine, "max_retries", 3),
+                retry_interval_hours=getattr(self._recovery_engine, "retry_interval_hours", 12),
                 config_snapshot={"version": getattr(self._config, "version", "1.0.0")},
             )
             recovery_tracker = RecoveryRunTracker(self._recovery_repo._db)

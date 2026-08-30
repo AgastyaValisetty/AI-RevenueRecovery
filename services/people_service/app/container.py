@@ -37,6 +37,7 @@ from .repositories import (
     SubscriptionRepository,
 )
 from .recovery.repository import RecoveryActionRepository
+from .recovery.domain import RecoveryDecisionEngine
 from .rng import SimulationRNG
 from .sim_config import SimConfig
 
@@ -53,6 +54,7 @@ def build_orchestrator(
     config: SimConfig | None = None,
     settings: Settings | None = None,
     enable_recovery: bool = True,
+    recovery_engine: RecoveryDecisionEngine | None = None,
 ) -> Orchestrator:
     """Build a fully-wired :class:`Orchestrator`.
 
@@ -68,7 +70,10 @@ def build_orchestrator(
     settings : Settings, optional
         Application settings (includes lazerpay_url).  Required for recovery.
     enable_recovery : bool
-        If True (default), wires the baseline recovery system into the orchestrator.
+        If True (default), wires the recovery system into the orchestrator.
+    recovery_engine : RecoveryDecisionEngine, optional
+        Custom recovery engine to inject (e.g. SmartRecoveryEngine).  If None,
+        the baseline engine is used.  Only relevant when ``enable_recovery=True``.
     """
     config = config or SimConfig.defaults()
     seed = seed if seed is not None else config.population.default_seed
@@ -116,6 +121,7 @@ def build_orchestrator(
         clock=clock,
         rng=rng,
         sim_config=config,
+        recovery_engine=recovery_engine,
     )
 
     logger.info(

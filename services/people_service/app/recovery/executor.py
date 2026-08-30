@@ -91,8 +91,12 @@ class RecoveryActionExecutor:
                 action, simulation_timestamp
             )
 
-        # SEND_PAYMENT_LINK and SEND_NOTIFICATION are future paths;
-        # for the baseline we only implement RETRY and STOP.
+        if action.action_type == RecoveryActionType.SEND_PAYMENT_LINK:
+            return self._execute_send_payment_link(action, simulation_timestamp)
+
+        if action.action_type == RecoveryActionType.SEND_NOTIFICATION:
+            return self._execute_send_notification(action, simulation_timestamp)
+
         logger.warning(
             "Unsupported action type %s — skipping execution", action.action_type
         )
@@ -518,6 +522,196 @@ class RecoveryActionExecutor:
             "STOP executed for intent %s — reason: %s",
             action.payment_intent_id,
             action.reason,
+        )
+        return updated
+
+    def _execute_send_payment_link(
+        self,
+        action: RecoveryAction,
+        simulation_timestamp: datetime,
+    ) -> RecoveryAction:
+        """Send a payment link to the customer via LazerPay.
+
+        Calls ``lazerpay_service:/api/payments/send-link`` to record the
+        link event.  The customer may then pay via the link outside the
+        simulation clock — the orchestrator reconciles the outcome later.
+
+        Since the customer-payment event is simulated asynchronously, the
+        outcome is determined by the CustomerResponseSimulator if available.
+        If no simulator is configured, the outcome is recorded as PENDING
+        (customer response will be reconciled by a later processing step).
+        """
+        lazerpay_url = self._settings.lazerpay_url
+        attempt_id = action.related_attempt_id or ""
+        person_id = str(action.payment_intent_id) if action.payment_intent_id else None
+
+        executed_at = datetime.now(timezone.utc)
+
+        try:
+            response = httpx.post(
+                f"{lazerpay_url}/api/payments/send-link",
+                json={
+                    "attempt_id": attempt_id,
+                    "person_id": person_id,
+                    "payment_method": action.payment_method,
+                },
+                timeout=self._settings.http_timeout_seconds,
+            )
+            data = response.json()
+            link_id = data.get("link_id", "")
+            lazerpay_status = data.get("status", "link_sent")
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            logger.warning(
+                "LazerPay unreachable for send-link on attempt %s: %s",
+                attempt_id,
+                exc,
+            )
+            return self._mark_failed(
+                action, "lazerpay_unavailable",
+                simulation_timestamp=simulation_timestamp,
+            )
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "LazerPay returned error for send-link on attempt %s: %s",
+                attempt_id,
+                exc,
+            )
+            return self._mark_failed(
+                action, "lazerpay_error",
+                simulation_timestamp=simulation_timestamp,
+            )
+
+        # If we have a customer response simulator, model the customer's
+        # response to the payment link.
+        outcome = RecoveryOutcome.PENDING
+        if self._customer_response_sim is not None:
+            response = self._customer_response_sim.simulate()
+            if response == CustomerResponse.RESPOND_AND_PAY:
+                outcome = RecoveryOutcome.SUCCESS
+                logger.info(
+                    "Customer responded and paid via link for intent %s",
+                    action.payment_intent_id,
+                )
+            elif response == CustomerResponse.DECLINE:
+                outcome = RecoveryOutcome.FAILED
+                logger.info(
+                    "Customer declined link payment for intent %s",
+                    action.payment_intent_id,
+                )
+            else:
+                # IGNORE — outcome stays PENDING
+                logger.info(
+                    "Customer ignored link for intent %s — outcome pending",
+                    action.payment_intent_id,
+                )
+
+        updated = RecoveryAction(
+            action_id=action.action_id,
+            run_id=action.run_id,
+            related_attempt_id=action.related_attempt_id,
+            payment_intent_id=action.payment_intent_id,
+            retry_number=action.retry_number,
+            action_type=action.action_type,
+            reason=action.reason,
+            schedule_reason=action.schedule_reason,
+            scheduled_for=action.scheduled_for,
+            executed_at=executed_at,
+            outcome=outcome,
+            failure_code=action.failure_code,
+            failure_reason=action.failure_reason,
+            cost=action.cost,
+            expected_recovery=action.expected_recovery,
+            amount=action.amount,
+            payment_method=action.payment_method,
+            retry_attempt_id=link_id,
+            customer_declined=(outcome == RecoveryOutcome.FAILED),
+            metadata_json={
+                **action.metadata_json,
+                "link_id": link_id,
+                "lazerpay_status": lazerpay_status,
+                "executed_at": executed_at.isoformat(),
+            },
+            created_at=action.created_at,
+        )
+
+        self._recovery_repo.save(updated)
+        logger.info(
+            "Sent payment link for intent %s (link_id=%s) → %s",
+            action.payment_intent_id,
+            link_id,
+            outcome.value,
+        )
+        return updated
+
+    def _execute_send_notification(
+        self,
+        action: RecoveryAction,
+        simulation_timestamp: datetime,
+    ) -> RecoveryAction:
+        """Send a notification reminder to the customer.
+
+        Notifications are softer than payment links — they remind the customer
+        that a payment is pending.  The actual payment is still processed via
+        the original payment method.
+
+        Since this doesn't trigger a payment attempt directly, the outcome
+        is recorded as PENDING.  If a customer response simulator is available,
+        we model whether the customer will respond by updating their payment
+        method and allowing the next retry to succeed.
+        """
+        executed_at = datetime.now(timezone.utc)
+
+        outcome = RecoveryOutcome.PENDING
+
+        # If we have a simulator, model the customer's response
+        if self._customer_response_sim is not None:
+            response = self._customer_response_sim.simulate()
+            if response == CustomerResponse.DECLINE:
+                outcome = RecoveryOutcome.FAILED
+                logger.info(
+                    "Customer declined notification for intent %s",
+                    action.payment_intent_id,
+                )
+            else:
+                logger.info(
+                    "Notification sent to customer for intent %s — response: %s",
+                    action.payment_intent_id,
+                    response.value,
+                )
+
+        updated = RecoveryAction(
+            action_id=action.action_id,
+            run_id=action.run_id,
+            related_attempt_id=action.related_attempt_id,
+            payment_intent_id=action.payment_intent_id,
+            retry_number=action.retry_number,
+            action_type=action.action_type,
+            reason=action.reason,
+            schedule_reason=action.schedule_reason,
+            scheduled_for=action.scheduled_for,
+            executed_at=executed_at,
+            outcome=outcome,
+            failure_code=action.failure_code,
+            failure_reason=action.failure_reason,
+            cost=action.cost,
+            expected_recovery=action.expected_recovery,
+            amount=action.amount,
+            payment_method=action.payment_method,
+            retry_attempt_id=None,
+            customer_declined=(outcome == RecoveryOutcome.FAILED),
+            metadata_json={
+                **action.metadata_json,
+                "notification_channel": "push",
+                "executed_at": executed_at.isoformat(),
+            },
+            created_at=action.created_at,
+        )
+
+        self._recovery_repo.save(updated)
+        logger.info(
+            "Sent notification for intent %s → %s",
+            action.payment_intent_id,
+            outcome.value,
         )
         return updated
 

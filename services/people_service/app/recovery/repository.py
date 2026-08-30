@@ -160,13 +160,18 @@ class RecoveryActionRepository:
     def find_scheduled_for_execution(
         self, current_time: datetime
     ) -> list[RecoveryAction]:
-        """Return RETRY actions that are scheduled and not yet executed,
-        ready to fire at ``current_time``."""
+        """Return recovery actions that are scheduled and not yet executed."""
         with self._db.session() as session:
             rows = session.scalars(
                 select(RecoveryActionRow)
                 .where(
-                    RecoveryActionRow.action_type == RecoveryActionType.RETRY.value,
+                    RecoveryActionRow.action_type.in_(
+                        [
+                            RecoveryActionType.RETRY.value,
+                            RecoveryActionType.SEND_PAYMENT_LINK.value,
+                            RecoveryActionType.SEND_NOTIFICATION.value,
+                        ]
+                    ),
                     RecoveryActionRow.scheduled_for <= current_time,
                     RecoveryActionRow.executed_at.is_(None),
                 )

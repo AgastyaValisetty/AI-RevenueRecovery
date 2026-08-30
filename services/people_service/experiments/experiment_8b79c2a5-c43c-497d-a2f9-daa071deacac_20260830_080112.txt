@@ -1,0 +1,49 @@
+========================================================================
+SARA Experiment Report — Baseline vs Smart Agent
+========================================================================
+
+BASELINE RUN
+  Cases:              4
+  Recovered:          1
+  Recovery value:     588.82 INR
+  Recovery rate:      25.00%
+  Retries:            6
+  Wasted retries:     5
+  Outreach actions:   0
+  Mean TTR:           13822.02 h
+  Stops:              3
+  Correct stops:      3
+  Duplicate risks:    0
+  Total cost:         15.00 INR
+  Incentive cost:     0 INR
+  Net recovered:      573.82 INR
+
+SMART AGENT RUN
+  Cases:              31
+  Recovered:          17
+  Recovery value:     77147.50 INR
+  Recovery rate:      54.84%
+  Retries:            129
+  Wasted retries:     112
+  Outreach actions:   0
+  Mean TTR:           23289.67 h
+  Stops:              14
+  Correct stops:      14
+  Duplicate risks:    0
+  Total cost:         322.50 INR
+  Incentive cost:     0 INR
+  Net recovered:      76825.00 INR
+
+LIFT
+  Increment:          76251.18 INR
+  Rate lift:          +29.84 pp
+  Wasted retry reduction: -107
+  TTR improvement:    -9467.65 h
+  Stop precision lift: +0.0000
+  Cost savings:       -307.50 INR
+  Duplicate risk delta: 0
+
+Notes:
+  Smart Agent improved net recovery by 76251.18 INR (+29.84 pp recovery rate). Zero duplicate-risk incidents in Smart Agent run.
+
+========================================================================

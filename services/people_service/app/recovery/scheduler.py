@@ -82,15 +82,17 @@ class RecoveryScheduler:
                 created_at=now_ts,
             )
         else:
-            # RETRY
+            # RETRY / outreach actions share the same persisted action shape.
+            action_type = decision.action
+            retry_number = decision.retry_number if action_type == RecoveryActionType.RETRY else None
             action = RecoveryAction(
                 action_id=uuid4(),
                 run_id=run_id,
                 related_attempt_id=context.attempt.attempt_id if context.attempt else None,
                 payment_intent_id=UUID(context.intent_id) if context.intent_id else None,
-                retry_number=decision.retry_number,
-                action_type=RecoveryActionType.RETRY,
-                reason=decision.reason or "retry",
+                retry_number=retry_number,
+                action_type=action_type,
+                reason=decision.reason or action_type.value.lower(),
                 schedule_reason=decision.reason,
                 scheduled_for=decision.scheduled_for or context.current_simulation_time,
                 executed_at=None,
@@ -112,7 +114,7 @@ class RecoveryScheduler:
                         else None
                     ),
                     "bank_state": context.bank_state,
-                    "retry_number": decision.retry_number,
+                    "retry_number": retry_number,
                 },
                 created_at=now_ts,
             )

@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
+from typing import Optional
 from uuid import UUID, uuid4
 
 from .failure_model import (
@@ -316,3 +317,155 @@ class PurchaseDecision:
     amount: Decimal
     decision_time: datetime
     reason: str = "normal"
+
+
+# --------------------------------------------------------------------------- #
+# Smart Agent domain types
+# --------------------------------------------------------------------------- #
+
+class SourceType(str, Enum):
+    """Origin of a revenue-at-risk case (unified across domains)."""
+
+    PAYMENT = "payment"
+    CHECKOUT = "checkout"
+    SUBSCRIPTION = "subscription"
+    MANDATE = "mandate"
+    INVOICE = "invoice"
+
+
+class CaseStatus(str, Enum):
+    """Lifecycle status of a RecoveryCase."""
+
+    DETECTED = "DETECTED"
+    DIAGNOSED = "DIAGNOSED"
+    ACTION_SCHEDULED = "ACTION_SCHEDULED"
+    ACTION_EXECUTED = "ACTION_EXECUTED"
+    RECOVERED = "RECOVERED"
+    STOPPED = "STOPPED"
+    ESCALATED = "ESCALATED"
+    EXPIRED = "EXPIRED"
+
+
+class ConsentState(str, Enum):
+    """Customer consent status for outreach."""
+
+    GRANTED = "GRANTED"
+    DENIED = "DENIED"
+    PENDING = "PENDING"
+    EXPIRED = "EXPIRED"
+
+
+@dataclass(frozen=True)
+class CaseScores:
+    """Calibrated 0–100 scores for a recovery case.
+
+    Every score is accompanied by a confidence (0–1) and sample_size
+    (number of comparable historical cases) so that decisions can be
+    gated on minimum evidence.
+    """
+
+    risk_score: float = 0.0          # P(revenue lost without action)
+    risk_confidence: float = 0.0
+    risk_sample_size: int = 0
+
+    recoverability_score: float = 0.0  # P(recovery | right action)
+    recoverability_confidence: float = 0.0
+    recoverability_sample_size: int = 0
+
+    urgency_score: float = 0.0       # Value of acting now vs. later
+    urgency_confidence: float = 0.0
+    urgency_sample_size: int = 0
+
+    customer_fatigue_score: float = 0.0  # Likelihood of annoyance (0–100)
+    customer_fatigue_confidence: float = 0.0
+    customer_fatigue_sample_size: int = 0
+
+    rail_health_score: float = 0.0   # Current reliability of the payment path (0–100)
+    rail_health_confidence: float = 0.0
+    rail_health_sample_size: int = 0
+
+
+@dataclass(frozen=True)
+class ExpectedValue:
+    """Expected-net-value calculation for a single candidate action.
+
+    ENPV = P(recovery | context, action) × amount
+         - gateway/retry cost
+         - incentive cost
+         - channel cost
+         - friction penalty
+         - risk penalty
+    """
+
+    action_type: str
+    recovery_probability: float
+    expected_gross_recovery: Decimal
+    retry_cost: Decimal = Decimal("0")
+    incentive_cost: Decimal = Decimal("0")
+    channel_cost: Decimal = Decimal("0")
+    friction_penalty: Decimal = Decimal("0")
+    risk_penalty: Decimal = Decimal("0")
+    expected_net_value: Decimal = Decimal("0")
+    # When this action would become viable (None = immediately)
+    earliest_at: Optional[datetime] = None
+
+    @property
+    def total_cost(self) -> Decimal:
+        return self.retry_cost + self.incentive_cost + self.channel_cost
+
+    @property
+    def total_penalty(self) -> Decimal:
+        return self.friction_penalty + self.risk_penalty
+
+
+@dataclass(frozen=True)
+class Diagnosis:
+    """Root-cause hypothesis from the diagnosis engine."""
+
+    label: str
+    confidence: float  # 0–1
+    evidence_refs: list[str] = field(default_factory=list)
+    competing_hypotheses: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RecoveryCase:
+    """Canonical case model unifying all revenue-at-risk sources.
+
+    Built from a RecoveryContext (for payment failures) or from other
+    source types (checkout, subscription, mandate, invoice).  Every
+    field is observable — no hidden simulator state is exposed.
+    """
+
+    case_id: UUID
+    merchant_id: UUID
+    customer_id: UUID
+    source_type: SourceType
+    source_id: str
+    amount: Decimal
+    currency: str = "INR"
+    due_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    current_status: str = "PENDING"
+    diagnosis: Optional[Diagnosis] = None
+    scores: Optional[CaseScores] = None
+    recoverability_score: float = 0.0
+    urgency_score: float = 0.0
+    customer_fatigue_score: float = 0.0
+    fraud_or_dispute_flags: list[str] = field(default_factory=list)
+    next_best_action: Optional[str] = None
+    action_deadline: Optional[datetime] = None
+    retry_budget: int = 3
+    contact_budget: int = 3
+    incentive_budget: Decimal = Decimal("0")
+    consent_state: ConsentState = ConsentState.PENDING
+    promise_to_pay: Optional[dict] = None  # amount, due_at, confidence
+    evidence_refs: list[str] = field(default_factory=list)
+    audit_refs: list[str] = field(default_factory=list)
+    # The RecoveryAction that will be scheduled for this case (set by planner)
+    scheduled_action: Optional[str] = None
+    # Idempotency key for the scheduled action
+    action_idempotency_key: Optional[str] = None
+    # Input snapshot hash for auditability
+    input_snapshot_hash: str = field(default_factory=str)
+    created_at: datetime = field(default_factory=now)

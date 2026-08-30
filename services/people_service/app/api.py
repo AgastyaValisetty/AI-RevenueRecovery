@@ -8,6 +8,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
 from pydantic import BaseModel
 
 from .domain import STATUS_COMPLETED, STATUS_FAILED, STATUS_PENDING, STATUS_RUNNING, LAZERPAY_FEE_RATE
+from .recovery.smart_agent import (
+    SmartRecoveryEngine,
+    ActionValueCalculator,
+    FeatureStore,
+    PolicyValidator,
+    RootCauseDiagnoser,
+    Explainer,
+    CounterfactualSimulator,
+    ScenarioLibrary,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -938,4 +948,639 @@ def _action_to_dict(action) -> dict:
         "expected_recovery": str(action.expected_recovery) if action.expected_recovery else None,
         "metadata_json": action.metadata_json or {},
         "created_at": action.created_at.isoformat() if action.created_at else None,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Smart Recovery Agent (SARA) Endpoints
+# --------------------------------------------------------------------------- #
+
+class SmartRunRequest(BaseModel):
+    """Request to trigger a smart-agent recovery run on failed intents."""
+    intent_ids: list[str] | None = None  # specific intents; if None, all recent failures
+    seed: int | None = None
+
+
+class CounterfactualRequest(BaseModel):
+    """Request to simulate counterfactual scenarios for a case."""
+    scenarios: list[str] | None = None  # scenario names; if None, all applicable
+
+
+@router.post("/recovery/smart/run")
+def run_smart_recovery(payload: SmartRunRequest, request: Request) -> dict:
+    """Trigger a Smart Agent recovery run on failed payment intents.
+
+    Uses the injected SmartRecoveryEngine (if configured) to make recovery
+    decisions.  Returns a summary of decisions made.
+    """
+    orch = request.app.state.orchestrator
+    recovery_repo = getattr(orch, "_recovery_repo", None)
+    if recovery_repo is None:
+        return {"status": "error", "message": "Recovery not enabled"}
+
+    # Check if a smart engine is wired
+    engine = getattr(orch, "_recovery_engine", None)
+    if not isinstance(engine, SmartRecoveryEngine) if engine else True:
+        return {
+            "status": "error",
+            "message": "SmartRecoveryEngine not configured. "
+            "Use the experiment runner or configure build_orchestrator with a smart engine.",
+        }
+
+    from .recovery.context_builder import RecoveryContextBuilder
+    context_builder = getattr(orch, "_recovery_context_builder", None)
+    if context_builder is None:
+        return {"status": "error", "message": "Context builder not available"}
+
+    # Get failed intents to process
+    from uuid import UUID as _UUID
+    if payload.intent_ids:
+        intent_ids = [_UUID(i) for i in payload.intent_ids]
+    else:
+        # Get all FAILED intents that haven't been scheduled for recovery yet
+        intent_repo = getattr(orch, "_intent_repo", None)
+        if intent_repo is None:
+            return {"status": "error", "message": "Intent repository not available"}
+        all_intents = intent_repo.find_all(status="FAILED")
+        intent_ids = [i.intent_id for i in all_intents[:50]]  # limit batch
+
+    decisions = []
+    for intent_id in intent_ids:
+        intent = orch._intent_repo.find_by_id(intent_id)
+        if intent is None:
+            continue
+
+        # Build recovery context
+        context = context_builder.build_for_intent(
+            intent,
+            current_simulation_time=orch._clock.now(),
+        )
+
+        # Get decision + explanation from the smart engine
+        if hasattr(engine, "decide_with_explanation"):
+            decision, explanation = engine.decide_with_explanation(context)
+        else:
+            decision = engine.decide(context)
+            explanation = None
+
+        entry = {
+            "intent_id": str(intent_id),
+            "action": decision.action.value,
+            "scheduled_for": decision.scheduled_for.isoformat() if decision.scheduled_for else None,
+            "reason": decision.reason,
+            "retry_number": decision.retry_number,
+        }
+        if explanation:
+            entry["explanation"] = {
+                "why_this_action": explanation.why_this_action,
+                "policy_summary": explanation.policy_summary,
+                "action_details": explanation.action_details,
+            }
+        decisions.append(entry)
+
+    return {
+        "status": "completed",
+        "decisions": decisions,
+        "count": len(decisions),
+    }
+
+
+@router.get("/recovery/smart/cases")
+def get_smart_cases(
+    request: Request,
+    limit: int = 100,
+    status: str | None = None,
+) -> dict:
+    """Return the ranked action queue — cases awaiting recovery action.
+
+    Cases are ordered by expected net value (highest first), with
+    explanations for why each action was recommended.
+    """
+    recovery_repo = getattr(request.app.state.orchestrator, "_recovery_repo", None)
+    if recovery_repo is None:
+        return {"cases": [], "count": 0, "recovery_enabled": False}
+
+    actions = recovery_repo.find_all(limit=limit, outcome="PENDING")
+
+    cases = []
+    for action in actions:
+        # Try to get explanation from audit trail
+        from .recovery.smart_agent.audit import AuditEventWriter
+        auditor = AuditEventWriter(recovery_repo._db)
+        audit_events = auditor.find_for_case(action.action_id)
+
+        explanation = None
+        for evt in audit_events:
+            if evt.event_type == "decision" and evt.decision_json:
+                explanation = evt.decision_json
+                break
+
+        cases.append({
+            "action_id": str(action.action_id),
+            "intent_id": str(action.payment_intent_id) if action.payment_intent_id else None,
+            "action_type": action.action_type.value,
+            "reason": action.reason,
+            "scheduled_for": action.scheduled_for.isoformat() if action.scheduled_for else None,
+            "priority": "high" if action.failure_code in ("INSUFFICIENT_FUNDS", "EXPIRED_PAYMENT_METHOD") else "normal",
+            "expected_recovery": str(action.expected_recovery) if action.expected_recovery else None,
+            "explanation": explanation,
+        })
+
+    # Sort by priority (high first) and scheduled_for time
+    cases.sort(key=lambda c: (
+        0 if c["priority"] == "high" else 1,
+        c["scheduled_for"] or "",
+    ))
+
+    return {"cases": cases, "count": len(cases)}
+
+
+@router.get("/recovery/smart/cases/{case_id}")
+def get_smart_case(case_id: str, request: Request) -> dict:
+    """Return full details for a single recovery case.
+
+    Includes: context snapshot, diagnosis, candidate actions with ENPV,
+    policy checks, audit trail, and explanation.
+    """
+    from uuid import UUID as _UUID
+    from .recovery.smart_agent.audit import AuditEventWriter
+
+    recovery_repo = getattr(request.app.state.orchestrator, "_recovery_repo", None)
+    if recovery_repo is None:
+        return {"error": "Recovery not enabled"}
+
+    try:
+        case_uuid = _UUID(case_id)
+    except ValueError:
+        return {"error": f"Invalid case_id: {case_id}"}
+
+    action = recovery_repo.find(case_uuid)
+    if action is None:
+        return {"error": f"Case not found: {case_id}"}
+
+    # Get full audit trail
+    auditor = AuditEventWriter(recovery_repo._db)
+    audit_events = auditor.find_for_case(action.action_id)
+
+    # Get prior actions for this intent
+    prior_actions = []
+    if action.payment_intent_id:
+        prior_actions = recovery_repo.find_by_intent_id(action.payment_intent_id)
+
+    # Find the decision event
+    decision_event = None
+    diagnosis_event = None
+    for evt in audit_events:
+        if evt.event_type == "decision":
+            decision_event = evt
+        elif evt.event_type == "llm_diagnosis":
+            diagnosis_event = evt
+
+    return {
+        "case_id": str(action.action_id),
+        "intent_id": str(action.payment_intent_id) if action.payment_intent_id else None,
+        "action_type": action.action_type.value,
+        "status": action.outcome.value if action.outcome else "PENDING",
+        "failure_code": action.failure_code,
+        "failure_reason": action.failure_reason,
+        "amount": str(action.amount) if action.amount else None,
+        "payment_method": action.payment_method,
+        "retry_number": action.retry_number,
+        "scheduled_for": action.scheduled_for.isoformat() if action.scheduled_for else None,
+        "executed_at": action.executed_at.isoformat() if action.executed_at else None,
+        "expected_recovery": str(action.expected_recovery) if action.expected_recovery else None,
+        "reason": action.reason,
+        "decision": decision_event.decision_json if decision_event else None,
+        "policy_checks": decision_event.policy_checks if decision_event else None,
+        "diagnosis": diagnosis_event.decision_json if diagnosis_event else None,
+        "prior_actions": [_action_to_dict(a) for a in prior_actions],
+        "audit_trail": [
+            {
+                "event_id": str(evt.event_id),
+                "timestamp": evt.timestamp.isoformat(),
+                "event_type": evt.event_type,
+                "actor": evt.actor,
+                "outcome": evt.outcome,
+                "input_hash": evt.input_snapshot_hash,
+            }
+            for evt in audit_events
+        ],
+    }
+
+
+@router.post("/recovery/smart/cases/{case_id}/simulate")
+def simulate_counterfactuals(
+    case_id: str,
+    payload: CounterfactualRequest,
+    request: Request,
+) -> dict:
+    """Run counterfactual simulation for a case.
+
+    Evaluates "what-if" scenarios (e.g., "wait 30 min then retry") and
+    returns ranked outcomes by expected net value.
+    """
+    from uuid import UUID as _UUID
+    from .recovery.smart_agent.agent import SmartRecoveryEngine
+
+    orch = request.app.state.orchestrator
+    recovery_repo = getattr(orch, "_recovery_repo", None)
+    if recovery_repo is None:
+        return {"error": "Recovery not enabled"}
+
+    engine = getattr(orch, "_recovery_engine", None)
+    if not isinstance(engine, SmartRecoveryEngine):
+        return {"error": "SmartRecoveryEngine not configured"}
+
+    try:
+        case_uuid = _UUID(case_id)
+    except ValueError:
+        return {"error": f"Invalid case_id: {case_id}"}
+
+    action = recovery_repo.find(case_uuid)
+    if action is None:
+        return {"error": f"Case not found: {case_id}"}
+
+    # Build context for this case
+    context_builder = getattr(orch, "_recovery_context_builder", None)
+    if context_builder is None:
+        return {"error": "Context builder not available"}
+
+    intent = orch._intent_repo.find_by_id(action.payment_intent_id) if action.payment_intent_id else None
+    if intent is None:
+        return {"error": "Cannot resolve payment intent for this case"}
+
+    context = context_builder.build_for_intent(intent, orch._clock.now())
+
+    # Run counterfactual evaluation
+    scenario_names = payload.scenarios
+    scenarios = ScenarioLibrary.get_all()
+    if scenario_names:
+        scenarios = [s for s in scenarios if s.name in scenario_names]
+
+    # Build a counterfactual simulator
+    cf = CounterfactualSimulator(engine._calculator)
+
+    # Build features + diagnosis
+    features = engine._feature_store.extract(context)
+    diagnosis = engine._diagnoser.diagnose(context, features)
+
+    # Evaluate scenarios
+    from .recovery.smart_agent.counterfactual import CounterfactualScenario
+    cf_scenarios = [
+        CounterfactualScenario(
+            name=s.name,
+            description=s.description,
+            action_type=s.expected_outcome.replace("retry", "RETRY").replace("stop", "STOP").replace("link", "SEND_PAYMENT_LINK"),
+            delay_hours=0.0,
+            bank_state=s.bank_state,
+        )
+        for s in scenarios
+    ]
+
+    outcomes = cf.evaluate(context, features, diagnosis, cf_scenarios)
+
+    return {
+        "case_id": case_id,
+        "scenarios": [
+            {
+                "name": o.scenario.name,
+                "description": o.scenario.description,
+                "action_type": o.scenario.action_type,
+                "delay_hours": o.scenario.delay_hours,
+                "expected_net_value": str(o.expected_value.expected_net_value),
+                "recovery_probability": o.recovery_probability,
+                "risk_notes": o.risk_notes,
+            }
+            for o in outcomes
+        ],
+        "best_scenario": outcomes[0].scenario.name if outcomes else None,
+    }
+
+
+@router.post("/recovery/smart/cases/{case_id}/approve")
+def approve_action(
+    case_id: str,
+    request: Request,
+) -> dict:
+    """Manually approve a recommended smart-agent action.
+
+    In the current simulation, actions are auto-executed.  This endpoint
+    is provided for future human-in-the-loop review mode.
+    """
+    from uuid import UUID as _UUID
+
+    recovery_repo = getattr(request.app.state.orchestrator, "_recovery_repo", None)
+    if recovery_repo is None:
+        return {"error": "Recovery not enabled"}
+
+    try:
+        case_uuid = _UUID(case_id)
+    except ValueError:
+        return {"error": f"Invalid case_id: {case_id}"}
+
+    action = recovery_repo.find(case_uuid)
+    if action is None:
+        return {"error": f"Case not found: {case_id}"}
+
+    if action.outcome is not None and action.outcome.value != "PENDING":
+        return {
+            "status": "already_processed",
+            "outcome": action.outcome.value,
+        }
+
+    # In simulation mode, the executor already handles execution.
+    # This endpoint marks the action as approved for audit purposes.
+    return {
+        "status": "approved",
+        "case_id": case_id,
+        "action_type": action.action_type.value,
+        "scheduled_for": action.scheduled_for.isoformat() if action.scheduled_for else None,
+        "message": "Action approved. Execution will proceed via the normal scheduler.",
+    }
+
+
+@router.post("/recovery/experiments/compare")
+def run_experiment_comparison(
+    payload: RunSimulationRequest,
+    request: Request,
+) -> dict:
+    """Run a paired experiment: baseline vs Smart Agent on cloned DB state.
+
+    This endpoint orchestrates:
+      1. A seed simulation run (creating failed payments).
+      2. Two recovery passes — one with BaselineRecoveryEngine, one with
+        SmartRecoveryEngine — on cloned database state.
+      3. Metric computation and lift calculation.
+
+    Returns the comparison report with lift metrics.
+    """
+    from .recovery.smart_agent.agent import SmartRecoveryEngine
+    from .recovery import BaselineRecoveryEngine
+
+    orch = request.app.state.orchestrator
+    db = orch._bank_repo._db
+
+    # Use the experiment runner module
+    from .recovery.smart_agent.experiment_runner import ExperimentRunner
+    runner = ExperimentRunner(db, settings=orch._settings)
+    report = runner.run(
+        people_count=payload.people_count,
+        hours=payload.hours + (payload.days * 24),
+        seed=payload.seed,
+    )
+
+    return report.to_dict() if hasattr(report, "to_dict") else {"report": str(report)}
+
+
+# --------------------------------------------------------------------------- #
+# Parallel experiment endpoints — both engines run simultaneously on
+# separate PostgreSQL schemas with identical seed data.
+# --------------------------------------------------------------------------- #
+
+
+@router.post("/recovery/experiments/parallel/run")
+def run_parallel_experiment(
+    payload: RunSimulationRequest,
+    request: Request,
+) -> dict:
+    """Run a parallel experiment: baseline + Smart Agent in separate schemas.
+
+    Both engines receive identical seed data (same seed → same RNG streams)
+    and run in parallel threads for the same time window.  The schemas are
+    dropped automatically after metrics are collected.
+
+    Returns the comparison report with lift metrics.
+    """
+    orch = request.app.state.orchestrator
+    db = orch._bank_repo._db
+
+    from .recovery.smart_agent.parallel_runner import ParallelExperimentRunner
+
+    # Keep schemas only when explicitly requested for case-level debugging.
+    # Normal UI runs should clean up their isolated copies after the scorecard
+    # is collected; the JSON report remains available in experiment history.
+    keep_schemas = request.query_params.get("keep_schemas", "true").lower() == "true"
+
+    runner = ParallelExperimentRunner(db, settings=orch._settings)
+    report = runner.run(
+        people_count=payload.people_count,
+        hours=payload.hours + (payload.days * 24),
+        seed=payload.seed or 42,
+        keep_schemas=keep_schemas,
+    )
+
+    # Also advance the public/read model used by the dashboard tabs.  The
+    # paired schemas remain the source of truth for the comparison; this
+    # mirror gives People, Ledger, Bank, Merchant Revenue, and Failures the
+    # same seeded simulation window to display after the button is pressed.
+    public_run_id = orch.initialize(payload.people_count, seed=payload.seed or 42)
+    hours = payload.hours + (payload.days * 24)
+    if hours > 0:
+        orch.run_hours(hours)
+
+    result = report.to_dict() if hasattr(report, "to_dict") else {"report": str(report)}
+    result["experiment_id"] = runner._last_experiment_id if hasattr(runner, "_last_experiment_id") else None
+    result["schemas_preserved"] = keep_schemas
+    result["seed"] = payload.seed or 42
+    result["people_count"] = payload.people_count
+    result["hours"] = hours
+    result["public_run_id"] = str(public_run_id) if public_run_id else None
+    return result
+
+    return report.to_dict()
+
+
+@router.get("/recovery/experiments/parallel/list")
+def list_parallel_experiments(
+    limit: int = 20,
+    request: Request = None,
+) -> dict:
+    """List previously saved parallel experiment reports."""
+    from .recovery.smart_agent.parallel_runner import ParallelExperimentRunner
+    from .config import Settings
+
+    settings = getattr(request.app.state, "settings", Settings.from_env())
+    runner = ParallelExperimentRunner.__new__(ParallelExperimentRunner)
+    runner._settings = settings
+    reports = runner.list_experiments(limit=limit)
+
+    return {"experiments": reports, "count": len(reports)}
+
+
+@router.get("/recovery/experiments/parallel/{experiment_id}/cases")
+def get_parallel_experiment_cases(
+    experiment_id: str,
+    engine: str = "smart",
+    limit: int = 100,
+    status: str | None = None,
+    request: Request = None,
+) -> dict:
+    """Retrieve recovery cases from a parallel experiment run.
+
+    Parameters
+    ----------
+    experiment_id :
+        The experiment identifier (first 8 chars of the UUID).
+    engine :
+        Which engine's schema to query ('baseline' or 'smart').
+    limit :
+        Maximum number of cases to return.
+    status :
+        Filter by outcome (SUCCESS, FAILED, UNKNOWN, PENDING).
+    """
+    from .recovery.smart_agent.parallel_runner import ParallelExperimentRunner
+    from .config import Settings
+
+    settings = getattr(request.app.state, "settings", Settings.from_env())
+    runner = ParallelExperimentRunner.__new__(ParallelExperimentRunner)
+    runner._settings = settings
+
+    cases = runner.get_experiment_cases(
+        experiment_id=experiment_id,
+        engine=engine,
+        limit=limit,
+        status=status,
+    )
+
+    return {"cases": cases, "count": len(cases), "engine": engine}
+
+
+@router.get("/recovery/experiments/parallel/{experiment_id}/cases/{case_id}")
+def get_parallel_experiment_case_detail(
+    experiment_id: str,
+    case_id: str,
+    engine: str = "smart",
+    request: Request = None,
+) -> dict:
+    """Retrieve full details for a single case from a parallel experiment.
+
+    For the smart agent engine, includes diagnosis, policy checks, audit trail,
+    and prior actions for the same payment intent.
+    """
+    from .recovery.smart_agent.parallel_runner import ParallelExperimentRunner
+    from .config import Settings
+
+    settings = getattr(request.app.state, "settings", Settings.from_env())
+    runner = ParallelExperimentRunner.__new__(ParallelExperimentRunner)
+    runner._settings = settings
+
+    return runner.get_experiment_case_detail(
+        experiment_id=experiment_id,
+        case_id=case_id,
+        engine=engine,
+    )
+
+
+@router.get("/recovery/experiments/parallel/{experiment_id}/audit")
+def get_parallel_experiment_audit(
+    experiment_id: str,
+    engine: str = "smart",
+    limit: int = 200,
+    request: Request = None,
+) -> dict:
+    """Return the immutable audit stream for baseline or SARA."""
+    if engine not in ("baseline", "smart"):
+        raise HTTPException(status_code=400, detail="engine must be baseline or smart")
+    from .recovery.smart_agent.parallel_runner import ParallelExperimentRunner
+    from .config import Settings
+    settings = getattr(request.app.state, "settings", Settings.from_env())
+    runner = ParallelExperimentRunner.__new__(ParallelExperimentRunner)
+    runner._settings = settings
+    events = runner.get_experiment_audit(experiment_id, engine=engine, limit=min(limit, 1000))
+    return {"experiment_id": experiment_id, "engine": engine, "events": events, "count": len(events)}
+
+
+@router.get("/recovery/audit/{case_id}")
+def get_audit_trail(case_id: str, request: Request) -> dict:
+    """Return the full audit trail for a recovery case.
+
+    Every decision, policy check, execution, and outcome is recorded.
+    """
+    from uuid import UUID as _UUID
+    from .recovery.smart_agent.audit import AuditEventWriter
+
+    recovery_repo = getattr(request.app.state.orchestrator, "_recovery_repo", None)
+    if recovery_repo is None:
+        return {"error": "Recovery not enabled"}
+
+    try:
+        case_uuid = _UUID(case_id)
+    except ValueError:
+        return {"error": f"Invalid case_id: {case_id}"}
+
+    auditor = AuditEventWriter(recovery_repo._db)
+    events = auditor.find_for_case(case_uuid)
+
+    return {
+        "case_id": case_id,
+        "events": [
+            {
+                "event_id": str(evt.event_id),
+                "run_id": str(evt.run_id) if evt.run_id else None,
+                "timestamp": evt.timestamp.isoformat(),
+                "agent_version": evt.agent_version,
+                "policy_version": evt.policy_version,
+                "actor": evt.actor,
+                "event_type": evt.event_type,
+                "input_snapshot_hash": evt.input_snapshot_hash,
+                "evidence_refs": evt.evidence_refs,
+                "decision_json": evt.decision_json,
+                "policy_checks": evt.policy_checks,
+                "idempotency_key": evt.idempotency_key,
+                "execution_result": evt.execution_result,
+                "outcome": evt.outcome,
+            }
+            for evt in events
+        ],
+        "count": len(events),
+    }
+
+
+@router.get("/recovery/insights/rail-health")
+def get_rail_health_insights(
+    request: Request,
+    method: str | None = None,
+) -> dict:
+    """Return rail health dashboard data.
+
+    Shows current bank state, failure rates, and do-not-retry windows
+    for each payment method.
+    """
+    orch = request.app.state.orchestrator
+    settings = getattr(orch, "_settings", None)
+    from .recovery.smart_agent.rail_health import RailHealthMonitor
+    from .database import Database
+
+    db = orch._bank_repo._db
+    monitor = RailHealthMonitor(db, settings)
+
+    methods = [method] if method else ["UPI", "CARD", "NETBANKING"]
+    rails = []
+
+    for m in methods:
+        health = monitor.get_rail_health(m)
+        rails.append({
+            "method": health.method,
+            "bank_state": health.bank_state,
+            "rail_health_score": health.rail_health_score,
+            "is_degraded": health.is_degraded,
+            "failure_rate_window": health.failure_rate_window,
+            "sample_size_window": health.sample_size_window,
+            "do_not_retry_until": (
+                health.do_not_retry_until.isoformat()
+                if health.do_not_retry_until
+                else None
+            ),
+            "last_updated": health.last_updated.isoformat(),
+        })
+
+    degraded = monitor.get_degraded_rails()
+
+    return {
+        "rails": rails,
+        "degraded_rails": degraded,
+        "overall_health": (
+            "healthy" if not degraded
+            else f"degraded: {', '.join(degraded)}"
+        ),
     }

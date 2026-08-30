@@ -20,6 +20,7 @@ def create_app() -> FastAPI:
         db,
         seed=config.population.default_seed,
         config=config,
+        settings=settings,
     )
     app.include_router(router)
     return app
