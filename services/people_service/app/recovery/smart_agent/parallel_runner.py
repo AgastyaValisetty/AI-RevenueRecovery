@@ -350,6 +350,45 @@ class ParallelExperimentRunner:
         finally:
             db._engine.dispose()
 
+    def get_experiment_metrics(self, experiment_id: str, engine: str = "smart") -> dict:
+        """Return lifetime recovery metrics from one preserved experiment schema."""
+        from ...recovery.metrics import RecoveryMetricsCollector
+
+        schema_name = (
+            f"{self._schema_prefix}_{experiment_id}_baseline"
+            if engine == "baseline"
+            else f"{self._schema_prefix}_{experiment_id}_smart"
+        )
+        db = SchemaScopedDatabase(settings=self._settings, schema_name=schema_name)
+        try:
+            metrics = RecoveryMetricsCollector(db).collect()
+            return metrics.to_dict()
+        finally:
+            db._engine.dispose()
+
+    def get_experiment_retries(
+        self,
+        experiment_id: str,
+        engine: str = "smart",
+        limit: int = 5000,
+        status: Optional[str] = None,
+    ) -> list[dict]:
+        """Return only retry actions from one preserved experiment schema."""
+        schema_name = (
+            f"{self._schema_prefix}_{experiment_id}_baseline"
+            if engine == "baseline"
+            else f"{self._schema_prefix}_{experiment_id}_smart"
+        )
+        db = SchemaScopedDatabase(settings=self._settings, schema_name=schema_name)
+        try:
+            repo = RecoveryActionRepository(db)
+            actions = repo.find_all(limit=limit, action_type="RETRY")
+            if status:
+                actions = [a for a in actions if a.outcome and a.outcome.value == status]
+            return [self._case_to_dict(a, engine) for a in actions]
+        finally:
+            db._engine.dispose()
+
     def get_experiment_case_detail(
         self, experiment_id: str, case_id: str, engine: str = "smart"
     ) -> dict:
@@ -574,6 +613,7 @@ class ParallelExperimentRunner:
         result = {
             "action_id": str(action.action_id),
             "intent_id": str(action.payment_intent_id) if action.payment_intent_id else None,
+            "payment_intent_id": str(action.payment_intent_id) if action.payment_intent_id else None,
             "engine": engine,
             "action_type": action.action_type.value if hasattr(action.action_type, 'value') else str(action.action_type),
             "reason": action.reason,
@@ -583,6 +623,8 @@ class ParallelExperimentRunner:
             "outcome": action.outcome.value if action.outcome else "PENDING",
             "retry_number": action.retry_number,
             "failure_code": action.failure_code,
+            "failure_reason": action.failure_reason,
+            "customer_declined": action.customer_declined,
             "amount": str(action.amount) if action.amount else None,
             "payment_method": action.payment_method,
             "cost": str(action.cost) if action.cost else None,

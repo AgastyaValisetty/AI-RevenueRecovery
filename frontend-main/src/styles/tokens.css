@@ -1,0 +1,130 @@
+/*
+ * SARA Design Tokens
+ * Canonical color tokens, typography, spacing, motion.
+ * Dark financial observatory × chartreuse intelligence.
+ */
+
+:root {
+  /* ── Canvas & Surfaces ────────────────────────── */
+  --bg-canvas:       #0A0D0C;
+  --bg-elevated:     #111615;
+  --bg-panel:        #1A211F;
+  --bg-panel-hover:  #212926;
+  --bg-panel-strong: #2A3330;
+
+  /* ── Borders ──────────────────────────────────── */
+  --border-subtle:   #2A3330;
+  --border-strong:   #3A4542;
+  --border-panel:    #212926;
+
+  /* ── Text Hierarchy ───────────────────────────── */
+  --text-primary:    #F5F7F6;
+  --text-secondary:  #9CA3A0;
+  --text-tertiary:   #6B6F6D;
+  --text-disabled:   #4A4D4C;
+
+  /* ── Accent — Chartreuse Intelligence ─────────── */
+  --chartreuse:      #C9F35B;
+  --chartreuse-dim:  #A3D845;
+  --chartreuse-bg:   rgba(201, 243, 91, 0.08);
+  --chartreuse-border: rgba(201, 243, 91, 0.30);
+  --chartreuse-glow: rgba(201, 243, 91, 0.20);
+
+  /* ── Money Color ──────────────────────────────── */
+  --money:           #E5A35D;
+  --money-dim:       #C98A50;
+  --money-bg:        rgba(229, 163, 93, 0.10);
+  --money-border:    rgba(229, 163, 93, 0.30);
+
+  /* ── Status Colors ────────────────────────────── */
+  --success:         #10B981;
+  --success-bg:      rgba(16, 185, 129, 0.08);
+  --success-border:  rgba(16, 185, 129, 0.30);
+
+  --warning:         #F59E0B;
+  --warning-bg:      rgba(245, 158, 11, 0.08);
+  --warning-border:  rgba(245, 158, 11, 0.30);
+
+  --error:           #EF4444;
+  --error-bg:        rgba(239, 68, 68, 0.08);
+  --error-border:    rgba(239, 68, 68, 0.30);
+
+  --info:            #38BDF8;
+  --info-bg:         rgba(56, 178, 248, 0.08);
+  --info-border:     rgba(56, 178, 248, 0.30);
+
+  /* ── Typography ───────────────────────────────── */
+  --font-sans:       'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display:    'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono:       'JetBrains Mono', ui-monospace, 'SFMono-Regular', 'Menlo', 'Consolas', monospace;
+
+  /* ── Sizing ───────────────────────────────────── */
+  --font-xs:         0.625rem;    /* 10px */
+  --font-sm:         0.75rem;     /* 12px */
+  --font-base:       1rem;        /* 16px */
+  --font-lg:         1.125rem;    /* 18px */
+  --font-xl:         1.25rem;     /* 20px */
+  --font-2xl:        1.5rem;      /* 24px */
+  --font-3xl:        1.875rem;    /* 30px */
+  --font-4xl:        2.25rem;     /* 36px */
+  --font-5xl:        3rem;        /* 48px */
+  --font-6xl:        3.75rem;     /* 60px */
+  --font-7xl:        4.5rem;      /* 72px */
+  --font-8xl:        6rem;        /* 96px */
+
+  /* ── Letter Spacing ───────────────────────────── */
+  --tracking-tight:  -0.03em;
+  --tracking-tightest: -0.04em;
+  --tracking-normal:  0;
+  --tracking-wide:    0.025em;
+
+  /* ── Line Heights ─────────────────────────────── */
+  --leading-tight:   1.1;
+  --leading-snug:    1.3;
+  --leading-normal:  1.5;
+  --leading-relaxed: 1.6;
+
+  /* ── Border Radius ────────────────────────────── */
+  --radius-xs:       4px;
+  --radius-sm:       6px;
+  --radius-md:       10px;
+  --radius-lg:       14px;
+  --radius-xl:       20px;
+  --radius-2xl:      28px;
+  --radius-3xl:      36px;
+  --radius-full:     9999px;
+
+  /* ── Shadows ──────────────────────────────────── */
+  --shadow-subtle:   0 4px 20px -2px rgba(0, 0, 0, 0.50);
+  --shadow-elevated: 0 8px 32px -4px rgba(0, 0, 0, 0.60);
+  --shadow-glow:     0 0 30px rgba(201, 243, 91, 0.20);
+  --shadow-glow-strong: 0 0 40px rgba(201, 243, 91, 0.35);
+  --shadow-inset:    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  /* ── Layout ───────────────────────────────────── */
+  --nav-width:       280px;
+  --nav-width-collapsed: 72px;
+  --content-max-width: 1440px;
+  --sidebar-width:   320px;
+  --panel-padding:   24px;
+
+  /* ── Transitions ──────────────────────────────── */
+  --transition-fast:  0.15s ease;
+  --transition-base:  0.25s ease;
+  --transition-slow:  0.40s ease;
+  --transition-slower: 0.60s ease;
+  --transition-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --transition-ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  /* ── Z-Index ──────────────────────────────────── */
+  --z-dropdown:      10;
+  --z-sticky:        20;
+  --z-overlay:       30;
+  --z-modal:         40;
+  --z-toast:         50;
+  --z-nav:           60;
+}
+
+/* ── Motion Presets (for direct style use) ──────── */
+[data-motion='none'] { animation-duration: 0ms !important; }

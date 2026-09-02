@@ -805,18 +805,23 @@ def list_recovery_actions(
     limit: int = 500,
     outcome: str | None = None,
     action_type: str | None = None,
+    engine_type: str | None = None,
 ) -> dict:
-    """Return recovery actions, optionally filtered by outcome or action type.
+    """Return recovery actions, optionally filtered by outcome, action type, or engine type.
 
     Each action is a fully auditable record with all fields needed to
     reconstruct the recovery history for a failed payment.
+
+    Query params:
+      engine_type  – filter to actions from a specific engine
+                    ('BASELINE' or 'AI_AGENT').
     """
     recovery_repo = getattr(request.app.state.orchestrator, "_recovery_repo", None)
     if recovery_repo is None:
         return {"actions": [], "count": 0, "recovery_enabled": False}
 
     actions = recovery_repo.find_all(
-        limit=limit, outcome=outcome, action_type=action_type
+        limit=limit, outcome=outcome, action_type=action_type, engine_type=engine_type
     )
     return {
         "actions": [_action_to_dict(a) for a in actions],
@@ -842,8 +847,18 @@ def get_recovery_history(intent_id: UUID, request: Request) -> dict:
 
 
 @router.get("/recovery/metrics")
-def get_recovery_metrics(request: Request, run_id: UUID | None = None) -> dict:
-    """Return aggregated recovery metrics (counts, GMV, rates, breakdowns)."""
+def get_recovery_metrics(
+    request: Request,
+    run_id: UUID | None = None,
+    engine_type: str | None = None,
+) -> dict:
+    """Return aggregated recovery metrics (counts, GMV, rates, breakdowns).
+
+    Query params:
+      run_id  – filter to a single simulation run.
+      engine_type – filter to actions from a specific engine
+                    ('BASELINE' or 'AI_AGENT').
+    """
     recovery_repo = getattr(request.app.state.orchestrator, "_recovery_repo", None)
     if recovery_repo is None:
         return {
@@ -859,7 +874,7 @@ def get_recovery_metrics(request: Request, run_id: UUID | None = None) -> dict:
     from .recovery.metrics import RecoveryMetricsCollector
 
     collector = RecoveryMetricsCollector(recovery_repo._db)
-    metrics = collector.collect(run_id=run_id)
+    metrics = collector.collect(run_id=run_id, engine_type=engine_type)
     result = metrics.to_dict()
     result["recovery_enabled"] = True
     return result
@@ -1443,6 +1458,51 @@ def get_parallel_experiment_cases(
     )
 
     return {"cases": cases, "count": len(cases), "engine": engine}
+
+
+@router.get("/recovery/experiments/parallel/{experiment_id}/metrics")
+def get_parallel_experiment_metrics(
+    experiment_id: str,
+    engine: str = "smart",
+    request: Request = None,
+) -> dict:
+    """Return lifetime metrics from a preserved parallel experiment schema."""
+    if engine not in ("baseline", "smart"):
+        raise HTTPException(status_code=400, detail="engine must be baseline or smart")
+    from .recovery.smart_agent.parallel_runner import ParallelExperimentRunner
+    from .config import Settings
+
+    settings = getattr(request.app.state, "settings", Settings.from_env())
+    runner = ParallelExperimentRunner.__new__(ParallelExperimentRunner)
+    runner._settings = settings
+    return {
+        **runner.get_experiment_metrics(experiment_id, engine=engine),
+        "experiment_id": experiment_id,
+        "engine": engine,
+    }
+
+
+@router.get("/recovery/experiments/parallel/{experiment_id}/retries")
+def get_parallel_experiment_retries(
+    experiment_id: str,
+    engine: str = "smart",
+    limit: int = 5000,
+    status: str | None = None,
+    request: Request = None,
+) -> dict:
+    """Return only RETRY actions from a preserved parallel experiment schema."""
+    if engine not in ("baseline", "smart"):
+        raise HTTPException(status_code=400, detail="engine must be baseline or smart")
+    from .recovery.smart_agent.parallel_runner import ParallelExperimentRunner
+    from .config import Settings
+
+    settings = getattr(request.app.state, "settings", Settings.from_env())
+    runner = ParallelExperimentRunner.__new__(ParallelExperimentRunner)
+    runner._settings = settings
+    retries = runner.get_experiment_retries(
+        experiment_id, engine=engine, limit=min(max(limit, 1), 5000), status=status
+    )
+    return {"actions": retries, "count": len(retries), "experiment_id": experiment_id, "engine": engine}
 
 
 @router.get("/recovery/experiments/parallel/{experiment_id}/cases/{case_id}")

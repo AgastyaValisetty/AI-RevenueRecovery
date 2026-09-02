@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select, func, case, cast, Numeric
+from sqlalchemy import select, func, case, cast, Numeric, text
 
 from ..database import Database
 from ..schema import RecoveryActionRow
@@ -113,12 +113,27 @@ class RecoveryMetricsCollector:
     def collect(
         self,
         run_id: Optional[UUID] = None,
+        engine_type: Optional[str] = None,
     ) -> RecoveryMetrics:
-        """Aggregate recovery metrics, optionally filtered to a single run."""
+        """Aggregate recovery metrics, optionally filtered to a single run or engine type."""
+        from ..schema import SimulationRunRow
+
         with self._db.session() as session:
             stmt = select(RecoveryActionRow)
             if run_id is not None:
                 stmt = stmt.where(RecoveryActionRow.run_id == run_id)
+            if engine_type is not None:
+                # Get run_ids whose config_snapshot has the given engine_type
+                result = session.execute(
+                    text("SELECT run_id FROM simulation_runs WHERE config_snapshot->>'engine_type' = :et")
+                    .params(et=engine_type)
+                )
+                eligible_run_ids = result.scalars().all()
+                if eligible_run_ids:
+                    stmt = stmt.where(RecoveryActionRow.run_id.in_(eligible_run_ids))
+                else:
+                    # No runs of this engine_type exist — return empty
+                    stmt = stmt.where(RecoveryActionRow.run_id == None)
 
             rows = session.scalars(stmt).all()
 

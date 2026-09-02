@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, text
 
 from ..database import Database
 from ..schema import RecoveryActionRow
@@ -145,14 +145,29 @@ class RecoveryActionRepository:
         limit: int = 500,
         outcome: Optional[str] = None,
         action_type: Optional[str] = None,
+        engine_type: Optional[str] = None,
     ) -> list[RecoveryAction]:
-        """Return recovery actions, optionally filtered by outcome or action type."""
+        """Return recovery actions, optionally filtered by outcome, action type, or engine type."""
+        from ..schema import SimulationRunRow
+
         with self._db.session() as session:
             stmt = select(RecoveryActionRow).order_by(RecoveryActionRow.created_at.desc())
             if outcome is not None:
                 stmt = stmt.where(RecoveryActionRow.outcome == outcome)
             if action_type is not None:
                 stmt = stmt.where(RecoveryActionRow.action_type == action_type)
+            if engine_type is not None:
+                # Get run_ids whose config_snapshot has the given engine_type
+                result = session.execute(
+                    text("SELECT run_id FROM simulation_runs WHERE config_snapshot->>'engine_type' = :et")
+                    .params(et=engine_type)
+                )
+                eligible_run_ids = result.scalars().all()
+                if eligible_run_ids:
+                    stmt = stmt.where(RecoveryActionRow.run_id.in_(eligible_run_ids))
+                else:
+                    # No runs of this engine_type exist — return empty result
+                    stmt = stmt.where(RecoveryActionRow.run_id == None)
             stmt = stmt.limit(limit)
             rows = session.scalars(stmt).all()
             return [_action_from_row(r) for r in rows]
