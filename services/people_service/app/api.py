@@ -27,6 +27,7 @@ class RunSimulationRequest(BaseModel):
     days: int = 0
     hours: int = 0
     seed: int | None = None
+    enable_recovery: bool = True
 
 
 class ProcessPaymentRequest(BaseModel):
@@ -49,6 +50,21 @@ class ProcessPaymentResponse(BaseModel):
 
 @router.post("/simulation/run")
 def run_simulation(payload: RunSimulationRequest, request: Request) -> dict:
+    if not payload.enable_recovery:
+        # Rebuild the orchestrator without recovery wired in. The new
+        # orchestrator's _recovery_repo is None, which the hourly loop
+        # already guards against (no _process_recovery is called).
+        db = request.app.state.db
+        settings = request.app.state.settings
+        config = request.app.state.sim_config
+        from .container import build_orchestrator
+        request.app.state.orchestrator = build_orchestrator(
+            db,
+            seed=payload.seed,
+            config=config,
+            settings=settings,
+            enable_recovery=False,
+        )
     orchestrator = request.app.state.orchestrator
     run_id = orchestrator.initialize(payload.people_count, seed=payload.seed)
     total_hours = payload.hours + (payload.days * 24)
@@ -57,6 +73,7 @@ def run_simulation(payload: RunSimulationRequest, request: Request) -> dict:
     summary = orchestrator.summary()
     summary["run_id"] = str(run_id) if run_id else None
     summary["seed"] = payload.seed
+    summary["recovery_enabled"] = bool(orchestrator._recovery_repo)
     return {"status": "completed", "summary": summary}
 
 

@@ -93,8 +93,8 @@ COMPOSITION: list[tuple[str, float]] = [
     ("ISSUER_DECLINE", 14),
     ("LIMIT_EXCEEDED", 8),
     ("RISK_DECLINE", 7),
-    ("NETWORK_ERROR", 12),
-    ("TIMEOUT", 9),
+    ("NETWORK_ERROR", 18),  # bumped 1.5x (was 12)
+    ("TIMEOUT", 11),         # bumped 1.2x (was 9)
     ("INVALID_DETAILS", 3),
     ("UNSUPPORTED_METHOD", 1),
 ]
