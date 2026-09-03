@@ -14,4 +14,7 @@ node_modules/
 services/people_service/nul
 big_man.md
 plans/
+memory/
+.claude/
+.codex/
 summary.md
