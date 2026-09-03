@@ -84,6 +84,10 @@ class RunMetrics:
     total_cost: Decimal
     incentive_cost: Decimal
     net_recovered_value: Decimal
+    # Retry-level success rate: successful retries / total retries attempted.
+    # Distinct from recovered_cases/total_cases (which is intent-level).
+    retries_successful: int = 0
+    retry_success_rate: float = 0.0
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict:
@@ -230,6 +234,15 @@ class ExperimentEvaluator:
         ]
         wasted_retries = len(executed_retries_failed)
 
+        # Retry-level success rate: how many attempts succeeded / total attempts.
+        # Distinct from recovered_cases/total_cases (intent-level).
+        retries_successful = sum(
+            1 for a in executed_retries if a.outcome == RecoveryOutcome.SUCCESS
+        )
+        retry_success_rate = (
+            retries_successful / total_retries if total_retries > 0 else 0.0
+        )
+
         total_outreach = len(links) + len(notifications)
 
         # Mean time to recovery
@@ -288,6 +301,8 @@ class ExperimentEvaluator:
             total_cost=total_cost,
             incentive_cost=Decimal("0"),  # baseline has no incentives
             net_recovered_value=net_recovered,
+            retries_successful=retries_successful,
+            retry_success_rate=retry_success_rate,
         )
 
     def compare(self, baseline: RunMetrics, smart: RunMetrics) -> LiftReport:

@@ -62,6 +62,11 @@ class RecoveryMetrics:
     recovery_rate: float = 0.0
     retry_success_rate: float = 0.0
 
+    # Failed-payment universe: distinct payment intents the engine acted on.
+    # Used as the denominator for the "recovered / total failed payments" rate.
+    total_failed_payments: int = 0
+    failed_payment_recovery_rate: float = 0.0
+
     def to_dict(self) -> dict:
         return {
             "total_recovery_actions": self.total_recovery_actions,
@@ -101,6 +106,8 @@ class RecoveryMetrics:
             "by_day": self.by_day,
             "recovery_rate": round(self.recovery_rate, 4),
             "retry_success_rate": round(self.retry_success_rate, 4),
+            "total_failed_payments": self.total_failed_payments,
+            "failed_payment_recovery_rate": round(self.failed_payment_recovery_rate, 4),
         }
 
 
@@ -193,6 +200,16 @@ class RecoveryMetricsCollector:
             if intent_ids:
                 metrics.average_retries_per_intent = metrics.total_retries_attempted / len(intent_ids)
 
+            # Total failed payments: distinct intents that the engine acted on.
+            # This is the denominator of the "recovered / total failed payments"
+            # rate shown on the dashboard.  Computed from all actions, not just
+            # retries, so a case that only got a STOP is still counted as a
+            # failed payment the system saw.
+            all_intent_ids = set(
+                r.payment_intent_id for r in rows if r.payment_intent_id is not None
+            )
+            metrics.total_failed_payments = len(all_intent_ids)
+
             # Timing: hours from failure to successful recovery
             from datetime import timedelta
             recovery_times = []
@@ -235,6 +252,15 @@ class RecoveryMetricsCollector:
                     metrics.retries_successful / metrics.total_retries_attempted
                 )
                 metrics.retry_success_rate = metrics.recovery_rate
+
+            # Failed-payment recovery rate: successful recoveries / total failed
+            # payments (denominator is the universe of failed intents, not the
+            # number of retry attempts).  This is the headline rate shown on
+            # the dashboard.
+            if metrics.total_failed_payments > 0:
+                metrics.failed_payment_recovery_rate = (
+                    metrics.successful_recoveries / metrics.total_failed_payments
+                )
 
             return metrics
 
