@@ -1,6 +1,6 @@
 {
   "baseline": {
-    "run_id": "d63d09d2-53a6-4c58-8e09-d21aa9bd2c84",
+    "run_id": "534bd6b6-7f83-435d-ab47-072dd5fa16ad",
     "engine_type": "BASELINE",
     "total_cases": 106,
     "recovered_cases": 61,
@@ -8,17 +8,19 @@
     "total_retries": 201,
     "wasted_retries": 140,
     "total_outreach": 0,
-    "mean_time_to_recovery_hours": 23140.4,
+    "mean_time_to_recovery_hours": 23159.46,
     "stop_count": 44,
     "correct_stops": 44,
     "duplicate_risk_incidents": 0,
     "total_cost": "502.50",
     "incentive_cost": "0",
     "net_recovered_value": "293444.63",
-    "timestamp": "2026-09-02T15:22:21.040063+00:00"
+    "retries_successful": 61,
+    "retry_success_rate": 0.3034825870646766,
+    "timestamp": "2026-09-03T10:25:58.241959+00:00"
   },
   "smart": {
-    "run_id": "0a336ed5-a417-4068-b449-ba67986880c8",
+    "run_id": "457e88e7-29ec-4422-b7ea-b611fb3ae677",
     "engine_type": "AI_AGENT",
     "total_cases": 107,
     "recovered_cases": 82,
@@ -26,22 +28,24 @@
     "total_retries": 89,
     "wasted_retries": 7,
     "total_outreach": 0,
-    "mean_time_to_recovery_hours": 23176.78,
+    "mean_time_to_recovery_hours": 23197.6,
     "stop_count": 0,
     "correct_stops": 0,
     "duplicate_risk_incidents": 0,
     "total_cost": "222.50",
     "incentive_cost": "0",
     "net_recovered_value": "368880.34",
-    "timestamp": "2026-09-02T15:22:21.051339+00:00"
+    "retries_successful": 82,
+    "retry_success_rate": 0.9213483146067416,
+    "timestamp": "2026-09-03T10:25:58.249451+00:00"
   },
   "incremental_recovered_value": "75435.71",
   "incremental_recovery_rate": 19.09,
   "wasted_retry_reduction": 133,
-  "time_to_recovery_improvement": -36.38,
+  "time_to_recovery_improvement": -38.14,
   "stop_precision_improvement": -1.0,
   "duplicate_risk_delta": 0,
   "total_cost_savings": "280.00",
-  "notes": "Parallel experiment 61b091cc: schemas=[exp_61b091cc_baseline, exp_61b091cc_smart], seed=42, people=100, hours=720. Both engines completed successfully. Smart Agent improved net recovery by 75435.71 INR (+19.09 pp recovery rate). Wasted retries reduced by 133 (140 \u2192 7). Zero duplicate-risk incidents in Smart Agent run.",
-  "experiment_id": "61b091cc"
+  "notes": "Parallel experiment 77e96112: schemas=[exp_77e96112_baseline, exp_77e96112_smart], seed=42, people=100, hours=720. Both engines completed successfully. Smart Agent improved net recovery by 75435.71 INR (+19.09 pp recovery rate). Wasted retries reduced by 133 (140 \u2192 7). Zero duplicate-risk incidents in Smart Agent run.",
+  "experiment_id": "77e96112"
 }

@@ -1,5 +1,5 @@
 ========================================================================
-SARA Parallel Experiment Report — ID: c94c03e5
+SARA Parallel Experiment Report — ID: ad81f748
 ========================================================================
 
 BASELINE RUN
@@ -10,7 +10,7 @@ BASELINE RUN
   Retries:            40
   Wasted retries:     26
   Outreach actions:   0
-  Mean TTR:           23339.4 h
+  Mean TTR:           23404.68 h
   Stops:              8
   Correct stops:      8
   Duplicate risks:    0
@@ -26,7 +26,7 @@ SMART AGENT RUN
   Retries:            22
   Wasted retries:     1
   Outreach actions:   0
-  Mean TTR:           23332.29 h
+  Mean TTR:           23397.56 h
   Stops:              0
   Correct stops:      0
   Duplicate risks:    0
@@ -38,11 +38,11 @@ LIFT
   Incremental:        11258.49 INR
   Rate lift:          +27.78 pp
   Wasted retry reduction: 25
-  TTR improvement:    7.11 h
+  TTR improvement:    7.12 h
   Stop precision lift: -1.0000
   Cost savings:       45.00 INR
   Duplicate risk delta: 0
 
-Notes: Parallel experiment c94c03e5: schemas=[exp_c94c03e5_baseline, exp_c94c03e5_smart], seed=42, people=100, hours=120. Both engines completed successfully. Smart Agent improved net recovery by 11258.49 INR (+27.78 pp recovery rate). Wasted retries reduced by 25 (26 → 1). Zero duplicate-risk incidents in Smart Agent run.
+Notes: Parallel experiment ad81f748: schemas=[exp_ad81f748_baseline, exp_ad81f748_smart], seed=42, people=100, hours=120. Both engines completed successfully. Smart Agent improved net recovery by 11258.49 INR (+27.78 pp recovery rate). Wasted retries reduced by 25 (26 → 1). Zero duplicate-risk incidents in Smart Agent run.
 
 ========================================================================
