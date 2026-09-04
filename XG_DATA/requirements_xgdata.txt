@@ -1,0 +1,13 @@
+# XG_DATA pipeline dependencies
+# The SARA stack already requires fastapi/sqlalchemy/psycopg2-binary (see
+# services/people_service/requirements.txt). This file adds only the extras
+# needed by the XG_DATA training pipeline.
+#
+# Install with: pip install -r XG_DATA/requirements_xgdata.txt
+
+pandas>=2.0,<3
+numpy>=1.24,<3
+xgboost>=2.0,<3
+psycopg2-binary>=2.9,<3
+sqlalchemy>=2.0,<3
+httpx>=0.27,<1

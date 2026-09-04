@@ -18,3 +18,9 @@ memory/
 .claude/
 .codex/
 summary.md
+lovable.md
+# XG_DATA generated artifacts
+XG_DATA/sara_recovery_training.csv
+XG_DATA/sara_recovery_scored.csv
+XG_DATA/xgb_model.json
+XG_DATA/__pycache__/
