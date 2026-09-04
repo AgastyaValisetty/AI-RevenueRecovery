@@ -1,0 +1,101 @@
+/* ===== PeoplePanel ===== */
+.people-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px 22px;
+  box-shadow: var(--shadow-subtle);
+  transition: box-shadow var(--duration-fast) ease;
+}
+
+.people-panel:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+.people-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.people-panel-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-heading);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.search-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input {
+  width: 180px;
+  padding: 6px 8px 6px 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--duration-fast) ease, background-color var(--duration-fast) ease;
+}
+
+.search-input:focus {
+  border-color: var(--charcoal);
+  background: var(--surface);
+}
+
+.search-input-wrapper .icon {
+  position: absolute;
+  left: 8px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.people-list {
+  display: grid;
+  gap: 6px;
+}
+
+.person-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+.person-card:hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+.person-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.person-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.empty-msg {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 12px 0;
+}

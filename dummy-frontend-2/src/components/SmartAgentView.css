@@ -1,0 +1,787 @@
+/* ===== SmartAgentView ===== */
+.smart-agent-view {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ---------- Sub-tab bar ---------- */
+.smart-subtab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  overflow-x: auto;
+  box-shadow: var(--shadow-subtle);
+}
+
+.smart-subtab-bar .subtab-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-fast) ease;
+  white-space: nowrap;
+}
+
+.smart-subtab-bar .subtab-item:hover {
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.smart-subtab-bar .subtab-item.active {
+  background: var(--canvas);
+  color: var(--charcoal);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.smart-subtab-content {
+  flex: 1;
+}
+
+/* ---------- Shared panel styles ---------- */
+.smart-cases-queue .panel,
+.smart-case-detail .panel,
+.smart-experiment .panel,
+.smart-rail-health .panel,
+.smart-parallel-experiment .panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-subtle);
+  margin-bottom: 18px;
+}
+
+.smart-cases-queue .panel-header,
+.smart-case-detail .panel-header,
+.smart-experiment .panel-header,
+.smart-rail-health .panel-header,
+.smart-parallel-experiment .panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+}
+
+.smart-cases-queue .panel-title-group,
+.smart-case-detail .panel-title-group,
+.smart-experiment .panel-title-group,
+.smart-rail-health .panel-title-group,
+.smart-parallel-experiment .panel-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.smart-cases-queue .panel-title,
+.smart-case-detail .panel-title,
+.smart-experiment .panel-title,
+.smart-rail-health .panel-title,
+.smart-parallel-experiment .panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-heading);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.smart-cases-queue .badge-count,
+.smart-case-detail .badge-count,
+.smart-experiment .badge-count,
+.smart-rail-health .badge-count,
+.smart-parallel-experiment .badge-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  padding: 2px 10px;
+}
+
+.smart-cases-queue .panel-body,
+.smart-case-detail .panel-body,
+.smart-experiment .panel-body,
+.smart-rail-health .panel-body,
+.smart-parallel-experiment .panel-body {
+  padding: 18px;
+}
+
+/* ---------- Controls bar ---------- */
+.smart-cases-queue .controls-bar,
+.smart-case-detail .controls-bar,
+.smart-experiment .controls-bar,
+.smart-rail-health .controls-bar,
+.smart-parallel-experiment .controls-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.smart-cases-queue .search-input-wrapper,
+.smart-experiment .search-input-wrapper,
+.smart-parallel-experiment .search-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.smart-cases-queue .search-input-wrapper > svg,
+.smart-experiment .search-input-wrapper > svg,
+.smart-parallel-experiment .search-input-wrapper > svg {
+  position: absolute;
+  left: 8px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.smart-cases-queue .search-input,
+.smart-experiment .search-input,
+.smart-parallel-experiment .search-input {
+  padding: 6px 10px 6px 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--duration-fast) ease, background-color var(--duration-fast) ease;
+}
+
+.smart-cases-queue .search-input:focus,
+.smart-experiment .search-input:focus,
+.smart-parallel-experiment .search-input:focus {
+  border-color: var(--charcoal);
+}
+
+.smart-cases-queue .select-filter,
+.smart-rail-health .select-filter {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+/* ---------- Buttons ---------- */
+.smart-cases-queue .btn,
+.smart-case-detail .btn,
+.smart-experiment .btn,
+.smart-rail-health .btn,
+.smart-parallel-experiment .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) ease, border-color var(--duration-fast) ease, transform var(--duration-fast) ease;
+}
+
+.smart-cases-queue .btn:hover,
+.smart-case-detail .btn:hover,
+.smart-experiment .btn:hover,
+.smart-rail-health .btn:hover,
+.smart-parallel-experiment .btn:hover {
+  background: var(--surface);
+}
+
+.smart-cases-queue .btn:active,
+.smart-experiment .btn:active,
+.smart-parallel-experiment .btn:active {
+  transform: scale(0.98);
+}
+
+.smart-cases-queue .btn-primary,
+.smart-experiment .btn-primary,
+.smart-parallel-experiment .btn-primary {
+  background: var(--charcoal);
+  color: var(--canvas);
+  border-color: var(--charcoal);
+}
+
+.smart-cases-queue .btn-primary:hover,
+.smart-experiment .btn-primary:hover,
+.smart-parallel-experiment .btn-primary:hover {
+  background: var(--text-heading);
+}
+
+.smart-cases-queue .btn-outline,
+.smart-case-detail .btn-outline,
+.smart-experiment .btn-outline,
+.smart-parallel-experiment .btn-outline {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.smart-cases-queue .btn-outline:hover,
+.smart-case-detail .btn-outline:hover,
+.smart-experiment .btn-outline:hover,
+.smart-parallel-experiment .btn-outline:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.smart-cases-queue .btn-sm,
+.smart-case-detail .btn-sm,
+.smart-experiment .btn-sm,
+.smart-parallel-experiment .btn-sm {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+/* ---------- Table styles ---------- */
+.smart-cases-queue .table-responsive,
+.smart-case-detail .table-responsive,
+.smart-experiment .table-responsive,
+.smart-rail-health .table-responsive,
+.smart-parallel-experiment .table-responsive {
+  overflow-x: auto;
+}
+
+.smart-cases-queue .data-table,
+.smart-case-detail .data-table,
+.smart-experiment .data-table,
+.smart-rail-health .data-table,
+.smart-parallel-experiment .data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.smart-cases-queue .data-table th,
+.smart-case-detail .data-table th,
+.smart-experiment .data-table th,
+.smart-rail-health .data-table th,
+.smart-parallel-experiment .data-table th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.smart-cases-queue .data-table td,
+.smart-case-detail .data-table td,
+.smart-experiment .data-table td,
+.smart-rail-health .data-table td,
+.smart-parallel-experiment .data-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.smart-cases-queue .data-table tbody tr:hover,
+.smart-rail-health .data-table tbody tr:hover,
+.smart-parallel-experiment .data-table tbody tr:hover {
+  background: var(--surface-hover);
+  cursor: pointer;
+}
+
+.smart-cases-queue .data-table tbody tr:last-child td,
+.smart-case-detail .data-table tbody tr:last-child td,
+.smart-experiment .data-table tbody tr:last-child td,
+.smart-rail-health .data-table tbody tr:last-child td,
+.smart-parallel-experiment .data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ---------- Tag badges — warm pastels only ---------- */
+.smart-cases-queue .tag-badge,
+.smart-case-detail .tag-badge,
+.smart-experiment .tag-badge,
+.smart-rail-health .tag-badge,
+.smart-parallel-experiment .tag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+}
+
+.tag-retry { background: var(--pale-blue-bg); color: var(--pale-blue); }
+.tag-stop { background: var(--pale-yellow-bg); color: var(--pale-yellow); }
+.tag-link { background: var(--pale-blue-bg); color: var(--pale-blue); }
+.tag-notification { background: var(--pale-blue-bg); color: var(--pale-blue); }
+.tag-default { background: var(--surface-hover); color: var(--text-secondary); border-color: var(--border); }
+.tag-failed { background: var(--pale-red-bg); color: var(--pale-red); }
+.tag-success { background: var(--pale-green-bg); color: var(--pale-green); }
+.tag-stopped { background: var(--pale-yellow-bg); color: var(--pale-yellow); }
+.tag-pending { background: var(--pale-blue-bg); color: var(--pale-blue); }
+.tag-unknown { background: var(--surface-hover); color: var(--text-muted); border-color: var(--border); }
+.tag-run { background: var(--surface-hover); color: var(--text-primary); border-color: var(--border); }
+
+/* ---------- Mono / currency cells ---------- */
+.smart-cases-queue .mono-cell,
+.smart-case-detail .mono-cell,
+.smart-experiment .mono-cell,
+.smart-rail-health .mono-cell,
+.smart-parallel-experiment .mono-cell {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.smart-cases-queue .currency,
+.smart-case-detail .currency,
+.smart-experiment .currency,
+.smart-parallel-experiment .currency .stat-value {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--charcoal);
+}
+
+/* ---------- Text helpers ---------- */
+.smart-cases-queue .text-secondary,
+.smart-case-detail .text-secondary,
+.smart-experiment .text-secondary,
+.smart-rail-health .text-secondary,
+.smart-parallel-experiment .text-secondary {
+  color: var(--text-secondary);
+}
+
+.smart-cases-queue .text-muted,
+.smart-case-detail .text-muted,
+.smart-experiment .text-muted,
+.smart-rail-health .text-muted,
+.smart-parallel-experiment .text-muted {
+  color: var(--text-muted);
+}
+
+/* ---------- Empty state ---------- */
+.smart-cases-queue .empty-state,
+.smart-experiment .empty-state,
+.smart-parallel-experiment .empty-state,
+.smart-rail-health .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 32px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.smart-cases-queue .empty-state svg,
+.smart-experiment .empty-state svg,
+.smart-rail-health .empty-state svg,
+.smart-parallel-experiment .empty-state svg {
+  width: 32px;
+  height: 32px;
+  opacity: 0.5;
+}
+
+/* ---------- Stats grid ---------- */
+.smart-cases-queue .stats-grid,
+.smart-experiment .stats-grid,
+.smart-parallel-experiment .stats-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.smart-experiment .stats-grid,
+.smart-parallel-experiment .stats-grid {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 700px) {
+  .smart-experiment .stats-grid,
+  .smart-parallel-experiment .stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.smart-cases-queue .stat-card,
+.smart-experiment .stat-card,
+.smart-parallel-experiment .stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px 22px;
+  box-shadow: var(--shadow-subtle);
+  transition: box-shadow var(--duration-fast) ease, transform var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+.smart-cases-queue .stat-card:hover,
+.smart-experiment .stat-card:hover,
+.smart-parallel-experiment .stat-card:hover {
+  border-color: var(--border-hover);
+  transform: translateY(-2px);
+}
+
+.smart-cases-queue .stat-card-header,
+.smart-experiment .stat-card-header,
+.smart-parallel-experiment .stat-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.smart-cases-queue .stat-title,
+.smart-experiment .stat-title,
+.smart-parallel-experiment .stat-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.smart-cases-queue .stat-value,
+.smart-experiment .stat-value,
+.smart-parallel-experiment .stat-value {
+  margin-top: 8px;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.smart-cases-queue .stat-desc,
+.smart-experiment .stat-desc,
+.smart-parallel-experiment .stat-desc {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* ---------- Stat card color variants (warm pastels) ---------- */
+.stat-indigo .stat-value,
+.stat-indigo .stat-icon-wrapper { color: var(--charcoal); }
+
+.stat-sky .stat-value,
+.stat-sky .stat-icon-wrapper { color: var(--pale-blue); }
+
+.stat-green .stat-value,
+.stat-green .stat-icon-wrapper { color: var(--pale-green); }
+
+.stat-red .stat-value,
+.stat-red .stat-icon-wrapper { color: var(--pale-red); }
+
+.stat-amber .stat-value,
+.stat-amber .stat-icon-wrapper { color: var(--pale-yellow); }
+
+.stat-charcoal .stat-value,
+.stat-charcoal .stat-icon-wrapper { color: var(--charcoal); }
+
+/* ---------- Form styles ---------- */
+.smart-experiment .form-group,
+.smart-parallel-experiment .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.smart-experiment .form-group label,
+.smart-parallel-experiment .form-group label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.smart-experiment .form-group input,
+.smart-parallel-experiment .form-group input {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  font-family: var(--font-mono);
+}
+
+.smart-experiment .form-group input:focus,
+.smart-parallel-experiment .form-group input:focus {
+  border-color: var(--charcoal);
+}
+
+.smart-experiment .form-grid,
+.smart-parallel-experiment .form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 600px) {
+  .smart-experiment .form-grid,
+  .smart-parallel-experiment .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Comparison tables ---------- */
+.smart-comparison-tables {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+@media (max-width: 800px) {
+  .smart-comparison-tables {
+    grid-template-columns: 1fr;
+  }
+}
+
+.comparison-col .data-table {
+  width: 100%;
+}
+
+.comparison-col .data-table thead tr:nth-child(1) th {
+  text-align: center;
+}
+
+/* ---------- Case grid ---------- */
+.smart-case-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 900px) {
+  .smart-case-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 500px) {
+  .smart-case-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.smart-case-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.smart-case-field .field-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.smart-case-field .field-value {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.smart-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 18px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.smart-section-body {
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+}
+
+/* ---------- Diagnosis ---------- */
+.smart-diagnosis .diag-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+
+.smart-diagnosis .diag-row:last-child {
+  margin-bottom: 0;
+}
+
+.smart-diagnosis .diag-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.smart-diagnosis .diag-value {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.hypotheses-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hypothesis-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.hyp-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.hyp-confidence {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+/* ---------- Policy checks table ---------- */
+.policy-checks-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.policy-checks-table th {
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.policy-checks-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+/* ---------- Rail health ---------- */
+.smart-overall-health {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.smart-overall-health .field-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.smart-overall-health .stat-value {
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.health-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--surface-hover);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.health-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+/* ---------- Case explorer tabs ---------- */
+.smart-case-explorer .panel-title-group {
+  margin-bottom: 12px;
+}
+
+.smart-case-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+/* ---------- Case explorer table hover -------- */
+.smart-rail-health .data-table tbody tr:hover,
+.smart-cases-queue .data-table tbody tr:hover {
+  cursor: pointer;
+  background: var(--surface-hover);
+}
+
+/* ---------- Lift section -------- */
+.smart-lift-section {
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* ---------- Spin animation ---------- */
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 900px) {
+  .smart-case-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 500px) {
+  .smart-case-grid {
+    grid-template-columns: 1fr;
+  }
+}

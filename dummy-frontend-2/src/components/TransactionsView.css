@@ -1,0 +1,50 @@
+/* ===== TransactionsView ===== */
+.transactions-view {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.transactions-view .panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-subtle);
+}
+
+.transactions-view .panel-header {
+  padding: 14px 18px;
+}
+
+.transactions-view .panel-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-group svg {
+  color: var(--text-muted);
+}
+
+.page-number {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+  .transactions-view .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

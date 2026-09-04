@@ -1,0 +1,223 @@
+/* ===== FailuresView ===== */
+.failures-view {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ---------- Summary cards ---------- */
+.failures-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px 22px;
+  box-shadow: var(--shadow-subtle);
+  transition: box-shadow var(--duration-fast) ease;
+}
+
+.stat-card:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+.stat-card-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stat-card-value {
+  margin-top: 8px;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.stat-card-sub {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.stat-failed .stat-card-value {
+  color: var(--pale-red);
+}
+
+.stat-settled .stat-card-value {
+  color: var(--pale-green);
+}
+
+.stat-rate .stat-card-value {
+  color: var(--pale-yellow);
+}
+
+.stat-rate .rate-high {
+  color: var(--pale-red);
+}
+
+/* ---------- Breakdown ---------- */
+.breakdown-list {
+  padding: 12px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.breakdown-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.breakdown-group + .breakdown-group {
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.breakdown-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.breakdown-group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.breakdown-group-label::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--charcoal);
+}
+
+.breakdown-group-count {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.breakdown-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.breakdown-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.breakdown-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.reason-code {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+
+.reason-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.bar-track {
+  height: 8px;
+  background: var(--surface-hover);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 9999px;
+  transform-origin: left;
+  transition: transform 0.4s ease;
+}
+
+.bar-rose {
+  background: var(--pale-red-bg);
+}
+
+.bar-amber {
+  background: var(--pale-yellow-bg);
+}
+
+.bar-neutral {
+  background: var(--charcoal);
+  opacity: 0.3;
+}
+
+.breakdown-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 64px;
+}
+
+.breakdown-count {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.breakdown-pct {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* ---------- Pie chart ---------- */
+.pie-wrap {
+  padding: 12px 18px 18px;
+  width: 100%;
+}
+
+.pie-wrap .recharts-legend-item-text,
+.pie-wrap .recharts-legend-item {
+  color: var(--text-secondary) !important;
+}
+
+/* ---------- Table ---------- */
+.reason-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 900px) {
+  .failures-stats {
+    grid-template-columns: 1fr;
+  }
+}

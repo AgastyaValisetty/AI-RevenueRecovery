@@ -1,0 +1,70 @@
+/* ===== App Layout — Warm Monochrome ===== */
+.app {
+  display: flex;
+  min-height: 100vh;
+  background: var(--bg-app);
+  font-family: var(--font-sans);
+}
+
+.main-content {
+  flex: 1;
+  margin-left: 260px;
+  padding: 32px 40px;
+  max-width: calc(100% - 40px);
+}
+
+.main-content.sidebar-collapsed {
+  margin-left: 60px;
+  max-width: calc(100% - 40px);
+}
+
+/* Macro whitespace between sections */
+.tab-content-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.page-header {
+  margin-bottom: 8px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.page-title {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-heading);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+/* Content width constraint */
+.content-constrained {
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* Scrollbar for main content */
+.main-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.main-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.main-content::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+
+.main-content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}

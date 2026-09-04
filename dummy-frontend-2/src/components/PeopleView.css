@@ -1,0 +1,39 @@
+/* ===== PeopleView ===== */
+.people-view {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Profile-specific tags are defined in index.css globals */
+.tag-student {
+  background: var(--pale-blue-bg);
+  color: var(--pale-blue);
+}
+
+.tag-young_professional {
+  background: var(--pale-yellow-bg);
+  color: var(--pale-yellow);
+}
+
+.tag-family {
+  background: var(--pale-yellow-bg);
+  color: var(--pale-yellow);
+}
+
+.tag-high_income {
+  background: var(--pale-green-bg);
+  color: var(--pale-green);
+}
+
+.tag-retudent {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+  .people-view .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

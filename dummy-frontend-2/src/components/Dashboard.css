@@ -1,0 +1,119 @@
+/* ===== Dashboard ===== */
+.dashboard-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 8px 0;
+}
+
+.hero-eyebrow {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eyebrow {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.eyebrow-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--charcoal);
+  flex-shrink: 0;
+}
+
+.hero-title {
+  font-family: var(--font-serif);
+  font-size: 32px;
+  font-weight: 600;
+  color: var(--text-heading);
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.hero-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 8px 0 0;
+}
+
+.hero-mark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.hero-mark svg {
+  color: var(--charcoal);
+}
+
+.hero-mark-label {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--charcoal);
+  font-size: 14px;
+}
+
+.bank-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  padding: 24px;
+}
+
+.health-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.health-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.health-value {
+  font-size: 16px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-heading);
+}
+
+.state-normal {
+  background: var(--pale-green-bg);
+  color: var(--pale-green);
+}
+
+.state-peak {
+  background: var(--pale-yellow-bg);
+  color: var(--pale-yellow);
+}
+
+.state-degraded {
+  background: var(--pale-red-bg);
+  color: var(--pale-red);
+}
+
+.state-outage {
+  background: var(--pale-red-bg);
+  color: var(--pale-red);
+}

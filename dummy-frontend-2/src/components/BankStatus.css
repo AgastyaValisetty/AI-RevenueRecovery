@@ -1,0 +1,115 @@
+/* ===== Bank Status ===== */
+.bank-status-view {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.bank-status-grid {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.bank-state-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-subtle);
+  width: fit-content;
+}
+
+.bank-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px;
+}
+
+.bank-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bank-metric-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.bank-metric-value {
+  font-size: 18px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-heading);
+}
+
+.bank-volume-row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.bank-volume-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--surface-hover);
+  border-radius: var(--radius-sm);
+}
+
+.bank-volume-item svg {
+  color: var(--text-secondary);
+}
+
+.bank-volume-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.bank-volume-value {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-heading);
+  margin-left: auto;
+}
+
+/* State badges */
+.state-normal {
+  background: var(--pale-green-bg);
+  color: var(--pale-green);
+  border-color: var(--border-subtle);
+}
+.state-normal svg { color: var(--pale-green); }
+
+.state-peak {
+  background: var(--pale-yellow-bg);
+  color: var(--pale-yellow);
+  border-color: var(--border-subtle);
+}
+.state-peak svg { color: var(--pale-yellow); }
+
+.state-degraded {
+  background: var(--pale-red-bg);
+  color: var(--pale-red);
+  border-color: var(--border-subtle);
+}
+.state-degraded svg { color: var(--pale-red); }
+
+.state-outage {
+  background: var(--pale-red-bg);
+  color: var(--pale-red);
+  border-color: var(--border-subtle);
+}
+.state-outage svg { color: var(--pale-red); }
+
+.bank-timeline {
+  padding: 8px 0;
+}
