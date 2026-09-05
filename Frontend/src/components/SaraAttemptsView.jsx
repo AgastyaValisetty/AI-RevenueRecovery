@@ -310,11 +310,19 @@ const SaraAttemptsView = ({ onRefresh, experimentId }) => {
                 ) : (
                   paginated.map((attempt, i) => {
                     const OutcomeIcon = OUTCOME_ICONS[attempt.outcome] || AlertOctagon;
-                    // ENPV comes from the XGBoost model in
-                    // XG_DATA/model/model.json. Prefer the model output, fall
-                    // back to SARA's audit-time decision JSON, then to '—'.
+                    // ENPV resolution order:
+                    //   1. `expected_net_value` from the persisted
+                    //      RecoveryAction (set by the scheduler at decision
+                    //      time — present in every container, no model
+                    //      required). This is the new canonical source.
+                    //   2. `predicted_enpv` from the XGBoost model
+                    //      (XG_DATA/model/model.json) when the model is
+                    //      available in the image — kept as an optional
+                    //      override.
+                    //   3. The decision-time `expected_net_value` stashed
+                    //      on the attempt's decision JSON (legacy fallback).
                     const decision = attempt.decision || {};
-                    const enpv = attempt.predicted_enpv ?? decision.expected_net_value;
+                    const enpv = attempt.expected_net_value ?? attempt.predicted_enpv ?? decision.expected_net_value;
                     return (
                       <tr key={attempt.action_id || i}>
                         <td className="mono-cell">{attempt.retry_number ?? '—'}</td>

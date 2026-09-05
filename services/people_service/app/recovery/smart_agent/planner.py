@@ -188,6 +188,13 @@ class ActionPlanner:
     def to_recovery_decision(self, planned: PlannedAction) -> RecoveryDecision:
         """Convert a PlannedAction into a RecoveryDecision for the scheduler."""
         candidate = planned.candidate
+        # The ExpectedValue computed for this candidate is the canonical ENPV —
+        # what we'd expect to net if we executed this action. Carry it through
+        # to the scheduler so the persisted RecoveryAction records it; the
+        # SARA Attempts Ledger reads it from metadata_json to render the
+        # "Expected Net Profit Value" column. (Stored in metadata_json rather
+        # than a dedicated column to avoid a schema migration.)
+        enpv = planned.expected_value.expected_net_value
 
         if candidate.action_type == "STOP":
             return RecoveryDecision(
@@ -195,6 +202,7 @@ class ActionPlanner:
                 scheduled_for=planned.scheduled_for,
                 reason=planned.reason,
                 retry_number=candidate.retry_number,
+                expected_net_value=enpv,
             )
 
         # Determine retry number
@@ -208,6 +216,7 @@ class ActionPlanner:
             scheduled_for=scheduled_for,
             reason=planned.reason,
             retry_number=retry_number,
+            expected_net_value=enpv,
         )
 
     # ------------------------------------------------------------------ #

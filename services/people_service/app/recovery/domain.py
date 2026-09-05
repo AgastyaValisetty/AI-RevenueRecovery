@@ -62,6 +62,10 @@ class RecoveryDecision:
     scheduled_for: Optional[datetime] = None
     reason: Optional[str] = None  # machine-readable label
     retry_number: Optional[int] = None  # 1, 2, 3 for retries; None for STOP/link
+    # Expected net value (ENPV) computed by the ActionValueCalculator at
+    # decision time. Carried through to the scheduler so the persisted
+    # RecoveryAction can record it (the SARA tab reads this for display).
+    expected_net_value: Optional[Decimal] = None
 
 
 @dataclass(frozen=True)

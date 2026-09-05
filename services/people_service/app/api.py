@@ -975,6 +975,7 @@ def list_recovery_runs(request: Request, limit: int = 50) -> dict:
 
 def _action_to_dict(action) -> dict:
     """Serialize a RecoveryAction dataclass for API responses."""
+    metadata = action.metadata_json or {}
     return {
         "action_id": str(action.action_id),
         "run_id": str(action.run_id) if action.run_id else None,
@@ -995,7 +996,12 @@ def _action_to_dict(action) -> dict:
         "customer_declined": action.customer_declined,
         "cost": str(action.cost) if action.cost else None,
         "expected_recovery": str(action.expected_recovery) if action.expected_recovery else None,
-        "metadata_json": action.metadata_json or {},
+        # ENPV is stashed in metadata_json by the scheduler at decision time
+        # (avoids a schema migration). Surface it as a top-level field so the
+        # SARA tab can render it without depending on the optional XGBoost
+        # model in the container image.
+        "expected_net_value": metadata.get("expected_net_value"),
+        "metadata_json": metadata,
         "created_at": action.created_at.isoformat() if action.created_at else None,
     }
 

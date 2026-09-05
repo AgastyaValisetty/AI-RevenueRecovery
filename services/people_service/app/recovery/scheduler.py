@@ -78,6 +78,14 @@ class RecoveryScheduler:
                         else None
                     ),
                     "bank_state": context.bank_state,
+                    # Persist ENPV at decision time so the SARA tab can render
+                    # it without depending on the optional XGBoost model
+                    # (which may not be present in the container image).
+                    "expected_net_value": (
+                        str(decision.expected_net_value)
+                        if decision.expected_net_value is not None
+                        else None
+                    ),
                 },
                 created_at=now_ts,
             )
@@ -115,6 +123,14 @@ class RecoveryScheduler:
                     ),
                     "bank_state": context.bank_state,
                     "retry_number": retry_number,
+                    # Persist ENPV at decision time so the SARA tab can render
+                    # it without depending on the optional XGBoost model
+                    # (which may not be present in the container image).
+                    "expected_net_value": (
+                        str(decision.expected_net_value)
+                        if decision.expected_net_value is not None
+                        else None
+                    ),
                 },
                 created_at=now_ts,
             )

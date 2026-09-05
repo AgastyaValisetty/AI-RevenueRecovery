@@ -671,6 +671,7 @@ class ParallelExperimentRunner:
 
     def _case_to_dict(self, action, engine: str) -> dict:
         """Convert a RecoveryAction to a dict for the API response."""
+        metadata = action.metadata_json or {}
         result = {
             "action_id": str(action.action_id),
             "intent_id": str(action.payment_intent_id) if action.payment_intent_id else None,
@@ -690,6 +691,11 @@ class ParallelExperimentRunner:
             "payment_method": action.payment_method,
             "cost": str(action.cost) if action.cost else None,
             "expected_recovery": str(action.expected_recovery) if action.expected_recovery else None,
+            # ENPV is stashed in metadata_json by the scheduler at decision
+            # time. Surface it as a top-level field so the SARA Attempts
+            # Ledger can render it without depending on the optional XGBoost
+            # model in the container image.
+            "expected_net_value": metadata.get("expected_net_value"),
         }
         return result
 
