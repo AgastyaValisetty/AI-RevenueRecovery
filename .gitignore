@@ -24,3 +24,5 @@ XG_DATA/sara_recovery_training.csv
 XG_DATA/sara_recovery_scored.csv
 XG_DATA/xgb_model.json
 XG_DATA/__pycache__/
+.claude/
+.agents/skills/
