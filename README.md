@@ -8,15 +8,26 @@ The stack models realistic payment failure modes (network errors, bank declines,
 
 ## 🧭 TL;DR — start it
 
-```bash
-# 1. Boot the whole stack (PostgreSQL + 3 backends + frontend) — auto-seeds with seed=42
-docker compose up --build
+**Just run one command:**
 
-# 2. Or override the default seed
-SEED=7 docker compose up --build
+```bash
+docker compose up --build
 ```
 
-Then hit:
+That brings up PostgreSQL + the 3 backend services + the Vite/React frontend, runs `pip install -r requirements.txt` inside every backend on **every** `up`, and auto-seeds 100 simulated people with `seed=42` so the UI is populated the moment it loads. No need to start each service by hand.
+
+Open the app: **http://localhost:5173**
+
+Override the seed:
+
+```bash
+SEED=7 docker compose up --build
+PEOPLE_COUNT=250 docker compose up --build
+```
+
+Or change the seed from the UI — every screen that runs a simulation (Simulation Runner, Comparison, Smart Agent) has a Seed input.
+
+Hit any service directly:
 
 | Service        | URL                                    |
 |----------------|----------------------------------------|
@@ -26,16 +37,7 @@ Then hit:
 | RupeeBank      | `http://localhost:8002/api/status`     |
 | Postgres (docker) | `localhost:5433` (`simulator` / `simulator_dev` / `revenue_recovery`) |
 
-What `docker compose up` does for you:
-- Builds and starts PostgreSQL + `people_service` + `bank_service` + `lazerpay_service` + the Vite frontend.
-- Runs `pip install -r requirements.txt` inside every backend container on **every** `up` (so a stale image is never a risk).
-- An `auto-seed` sidecar waits for `people_service` to be ready, then `POST /api/simulation/run` with `seed=42` (overridable via `SEED=...`) and `people_count=100` (overridable via `PEOPLE_COUNT=...`).
-- Idempotent: on subsequent `up`s the auto-seed sidecar detects the existing population and exits without re-seeding.
-- The frontend is open at `http://localhost:5173` and shows real data immediately — no "Start" click needed.
-
-Override the seed from the UI: every screen that runs a simulation (Simulation Runner, Comparison, Smart Agent) has a Seed input — change it and click Run.
-
-`Ctrl+C` cleanly tears down everything. `docker compose down -v` also wipes the Postgres volume (fresh DB on next `up`).
+`Ctrl+C` cleanly tears down everything. `docker compose down -v` also wipes the Postgres volume (fresh DB on next `up`). See [🚀 Startup commands](#-startup-commands) for the full list of options and the `master.py` / manual alternatives.
 
 ---
 
@@ -91,7 +93,33 @@ The bank ↔ lazerpay URL is wired through the `BANK_URL` env var (`http://bank_
 
 ## 🚀 Startup commands
 
-### A. Using `master.py` (native, no Docker for backends)
+### ✅ One command — `docker compose up --build` (use this)
+
+This is the **recommended way to run the whole stack**. PostgreSQL + the 3 backends + the React/Vite frontend all come up together, and the `auto-seed` sidecar populates 100 simulated people with `seed=42` so the UI shows real data the moment it loads. No need to start each service by hand.
+
+```bash
+# from the repo root
+docker compose up --build                  # postgres + 3 backends + frontend, auto-seed=42
+
+# common overrides
+SEED=7 docker compose up --build           # different random seed
+PEOPLE_COUNT=250 docker compose up --build # seed 250 people instead of 100
+docker compose down -v                     # tear down + wipe DB volume (fresh start next time)
+docker compose logs -f people_service      # tail logs of one service
+```
+
+What happens under the hood:
+- Each backend container's `command:` wrapper runs `python /tools/pip_install.py` before uvicorn, so `pip install -r requirements.txt` runs on **every** `up` — no stale-image surprises.
+- The frontend is a `node:20-alpine` container running `npm run dev -- --host 0.0.0.0 --port 5173`. Its Vite proxy points at `http://people_service:8000` (via `VITE_API_TARGET`) so `/api` calls hit the docker DNS name.
+- The `auto-seed` sidecar waits for `people_service` to be ready, then calls `POST /api/simulation/run` with the configured seed. It's idempotent — on subsequent `up`s it sees the population already exists and exits without re-seeding.
+
+Open `http://localhost:5173` once `up` finishes — the dashboard, ledger, recovery, and comparison views are already populated. To change the seed from the UI, every screen that runs a simulation (Simulation Runner, Comparison, Smart Agent) has a Seed input — edit it and click Run.
+
+---
+
+### 🪟 Alternative: `master.py` (native, no Docker for backends)
+
+> If you specifically want to run the FastAPI services on the host (no Docker for the backends — Postgres still runs in Docker), `master.py` does it in one command on Windows. Most people should not need this — prefer `docker compose up --build` above.
 
 ```bash
 python master.py                    # boot + seed 100 people
@@ -105,20 +133,11 @@ python master.py --init 0           # boot only, no seeding
 - On Windows, binds them into a Job Object so Ctrl+C / process death kills all children
 - Seeds an initial simulation run via `POST /api/simulation/run`
 
-### B. Using `docker compose up` (recommended)
+For the frontend under `master.py`, open a separate terminal and run `cd Frontend && npm install && npm run dev` — it will connect to `http://localhost:8000` by default.
 
-```bash
-docker compose up --build                  # everything: postgres + 3 backends + frontend, auto-seed=42
-SEED=7 docker compose up --build           # same, but seed=7
-PEOPLE_COUNT=250 docker compose up --build # same, but seed 250 people
-docker compose up postgres                 # just the DB
-docker compose logs -f people_service
-docker compose down -v                     # tear down + wipe DB volume
-```
+---
 
-The compose stack is the recommended one-command path. The frontend is a `node:20-alpine` container running `npm run dev -- --host 0.0.0.0 --port 5173`; the Vite proxy points at the docker DNS name `http://people_service:8000` (set via `VITE_API_TARGET`). Each backend's `command:` wrapper runs `python /tools/pip_install.py` before uvicorn, so `pip install -r requirements.txt` happens on every `up`. The `auto-seed` sidecar waits for `people_service` to be ready, then calls `POST /api/simulation/run` with the configured seed (idempotent — skips if the population already exists).
-
-### C. Manual (for debugging)
+### 🛠 Manual (for debugging individual services)
 
 ```bash
 # terminal 1
@@ -134,6 +153,8 @@ cd services/people_service && \
   LAZERPAY_URL=http://localhost:8001 \
   uvicorn app.main:app --port 8000
 ```
+
+Use this only when you need to attach a debugger to a single service. The `docker compose up --build` path covers the normal case.
 
 ---
 
