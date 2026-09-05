@@ -29,6 +29,7 @@ from ...config import LLMConfig, Settings
 from ...container import build_orchestrator
 from ...database import Database, SchemaScopedDatabase
 from ...sim_config import SimConfig
+from sqlalchemy import text
 from .. import BaselineRecoveryEngine, RecoveryEngineType
 from ..domain import RecoveryDecision
 from ..repository import RecoveryActionRepository
@@ -508,6 +509,66 @@ class ParallelExperimentRunner:
                 continue
 
         return reports
+
+    def nuke_all(self) -> dict:
+        """Drop every preserved parallel-experiment schema + delete its
+        on-disk report files. Used by ``/api/simulation/nuke`` so a
+        full DB reset wipes SARA's preserved experiments too — otherwise
+        ``list_experiments`` keeps returning the old JSON reports after
+        the public schema is reset and the SARA Attempts tab shows stale
+        retries.
+
+        Returns a small summary dict for the API response.
+        """
+        deleted_files = 0
+        dropped_schemas: set[str] = set()
+
+        # 1. Discover schemas to drop from the report files + a best-effort
+        #    glob for any extras the report index missed.
+        report_experiments: set[str] = set()
+        if EXPERIMENT_OUTPUT_DIR.exists():
+            for json_path in EXPERIMENT_OUTPUT_DIR.glob("parallel_*.json"):
+                try:
+                    data = json.loads(json_path.read_text())
+                    eid = data.get("experiment_id")
+                    if eid:
+                        report_experiments.add(str(eid))
+                except Exception:
+                    continue
+
+        # 2. Drop matching schemas. Each preserved experiment owns two
+        #    schemas: <prefix>_<id>_baseline and <prefix>_<id>_smart.
+        schema_prefix = self._schema_prefix
+        try:
+            with self._master_db._engine.begin() as conn:
+                rows = conn.execute(text(
+                    "SELECT schema_name FROM information_schema.schemata "
+                    "WHERE schema_name LIKE :pat"
+                ), {"pat": f"{schema_prefix}_%"}).fetchall()
+                for (sname,) in rows:
+                    if sname in dropped_schemas:
+                        continue
+                    conn.execute(text(f"DROP SCHEMA IF EXISTS {sname} CASCADE"))
+                    dropped_schemas.add(sname)
+        except Exception as e:
+            logger.warning("nuke_all: schema drop iteration failed: %s", e)
+
+        # 3. Delete the on-disk report files. Without this, list_experiments
+        #    keeps returning reports for schemas we just dropped and the
+        #    frontend's "use latest experiment" fallback re-fetches them.
+        if EXPERIMENT_OUTPUT_DIR.exists():
+            for path in EXPERIMENT_OUTPUT_DIR.glob("parallel_*"):
+                try:
+                    path.unlink()
+                    deleted_files += 1
+                except Exception:
+                    continue
+
+        return {
+            "dropped_schemas": sorted(dropped_schemas),
+            "deleted_report_files": deleted_files,
+            "report_experiments_seen": sorted(report_experiments),
+        }
 
     # ------------------------------------------------------------------ #
     # Internal helpers

@@ -1,0 +1,27 @@
+{
+  "feature_columns": [
+    "amount",
+    "retry_number",
+    "customer_declined",
+    "is_retry",
+    "is_payment_link",
+    "is_notification",
+    "is_stop",
+    "is_upi",
+    "is_card",
+    "is_netbanking",
+    "fc_INSUFFICIENT_FUNDS",
+    "fc_NETWORK_ERROR",
+    "fc_INVALID_DETAILS",
+    "fc_BANK_DECLINE",
+    "fc_AUTHENTICATION",
+    "fc_OTHER"
+  ],
+  "retry_cost_inr": 2.5,
+  "val_auc": 0.9855436627072184,
+  "n_train": 4661,
+  "n_val": 1166,
+  "positive_rate": 0.1616612321949545,
+  "model_type": "XGBClassifier",
+  "xgboost_version": "2.1.4"
+}

@@ -28,11 +28,11 @@
       {"min": 400001, "max": 800000, "weight": 0.025},
       {"min": 800001, "max": 1500000, "weight": 0.005}
     ],
-    "lognormal_mean": 10.6,
+    "lognormal_mean": 10.6677,
     "lognormal_sigma": 0.5
   },
   "spending": {
-    "base_daily_percentage": 1.5,
+    "base_daily_percentage": 1.15,
     "salary_day_boost_days": [1, 5, 15],
     "salary_day_boost": 0.5,
     "weekend_boost": 0.3,

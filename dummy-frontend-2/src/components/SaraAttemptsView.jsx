@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   XCircle,
   PauseCircle,
+  Clock,
   TrendingUp,
   BarChart3,
   AlertOctagon,
@@ -27,11 +28,11 @@ const OUTCOME_LABELS = {
 };
 
 const OUTCOME_ICONS = {
-  PENDING: 'Clock',
-  SUCCESS: 'CheckCircle2',
-  FAILED: 'XCircle',
-  STOPPED: 'PauseCircle',
-  UNKNOWN: 'AlertOctagon',
+  PENDING: Clock,
+  SUCCESS: CheckCircle2,
+  FAILED: XCircle,
+  STOPPED: PauseCircle,
+  UNKNOWN: AlertOctagon,
 };
 
 const formatTimestamp = (iso) => {
@@ -289,9 +290,7 @@ const SaraAttemptsView = ({ onRefresh, experimentId }) => {
                   <th>Failure Code</th>
                   <th>Failure Reason</th>
                   <th>Amount</th>
-                  <th>ENPV</th>
-                  <th>Prob. of Success</th>
-                  <th>Expected Recovery</th>
+                  <th>Expected Net Profit Value</th>
                   <th>Scheduled</th>
                   <th>Executed</th>
                   <th>Outcome</th>
@@ -301,7 +300,7 @@ const SaraAttemptsView = ({ onRefresh, experimentId }) => {
               <tbody>
                 {paginated.length === 0 ? (
                   <tr>
-                    <td colSpan="11">
+                    <td colSpan="9">
                       <div className="empty-state">
                         <BookOpen size={32} />
                         <p>{loading ? 'Loading SARA retry attempts…' : 'No SARA retry attempts found.'}</p>
@@ -310,13 +309,12 @@ const SaraAttemptsView = ({ onRefresh, experimentId }) => {
                   </tr>
                 ) : (
                   paginated.map((attempt, i) => {
-                    const OutcomeIcon = OUTCOME_ICONS[attempt.outcome] || 'Clock';
-                    // ENPV and probability are persisted in the audit event's
-                    // decision JSON for SARA decisions. Older rows or non-SARA
-                    // actions won't have them, so we fall back to '—'.
+                    const OutcomeIcon = OUTCOME_ICONS[attempt.outcome] || AlertOctagon;
+                    // ENPV comes from the XGBoost model in
+                    // XG_DATA/model/model.json. Prefer the model output, fall
+                    // back to SARA's audit-time decision JSON, then to '—'.
                     const decision = attempt.decision || {};
-                    const enpv = decision.expected_net_value;
-                    const prob = decision.recovery_probability;
+                    const enpv = attempt.predicted_enpv ?? decision.expected_net_value;
                     return (
                       <tr key={attempt.action_id || i}>
                         <td className="mono-cell">{attempt.retry_number ?? '—'}</td>
@@ -333,14 +331,6 @@ const SaraAttemptsView = ({ onRefresh, experimentId }) => {
                         </td>
                         <td className="mono-cell text-sm">
                           {enpv != null && enpv !== '' ? `₹${parseFloat(enpv).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—'}
-                        </td>
-                        <td className="mono-cell text-sm">
-                          {prob != null ? pct(prob) : '—'}
-                        </td>
-                        <td className="mono-cell text-sm">
-                          {attempt.expected_recovery != null && attempt.expected_recovery !== ''
-                            ? `₹${parseFloat(attempt.expected_recovery).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                            : '—'}
                         </td>
                         <td className="mono-cell" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                           {formatTimestamp(attempt.scheduled_for)}

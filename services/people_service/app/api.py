@@ -133,6 +133,10 @@ def nuke_database(request: Request) -> dict:
     This nukes: people, accounts, banks, merchants, products, subscriptions,
     payment intents, ledger entries, simulation runs, and recovery actions.
 
+    It ALSO drops every preserved parallel-experiment schema and deletes the
+    on-disk report files, so the SARA Attempts tab doesn't keep showing
+    retries from a previous parallel run after the page reloads.
+
     After nuking, a fresh orchestrator is built so the service is immediately
     ready for a new simulation run.
     """
@@ -142,6 +146,18 @@ def nuke_database(request: Request) -> dict:
 
     db.drop_schema()
     db.create_schema()
+
+    # Drop preserved parallel-experiment schemas + report files so the SARA
+    # Attempts tab is fully cleared, not just the public schema's tables.
+    parallel_cleanup: dict = {}
+    try:
+        from .recovery.smart_agent.parallel_runner import ParallelExperimentRunner
+        runner = ParallelExperimentRunner(db, settings=settings)
+        parallel_cleanup = runner.nuke_all()
+    except Exception as exc:
+        # Don't fail the reset just because parallel cleanup blew up — the
+        # main reset already happened. Log so the operator sees it.
+        parallel_cleanup = {"error": str(exc)}
 
     # Rebuild the orchestrator with a fresh RNG (seed from config)
     from .container import build_orchestrator as _rebuild_orchestrator
@@ -158,6 +174,7 @@ def nuke_database(request: Request) -> dict:
         "status": "nuked",
         "message": "All tables dropped and recreated. Fresh orchestrator built.",
         "summary": summary,
+        "parallel_cleanup": parallel_cleanup,
     }
 
 
@@ -1519,7 +1536,61 @@ def get_parallel_experiment_retries(
     retries = runner.get_experiment_retries(
         experiment_id, engine=engine, limit=min(max(limit, 1), 5000), status=status
     )
-    return {"actions": retries, "count": len(retries), "experiment_id": experiment_id, "engine": engine}
+
+    # Best-effort: enrich each row with predicted_p_recovery + predicted_enpv.
+    # If the model isn't trained (or xgboost isn't installed), skip silently.
+    enriched = _enrich_with_predictions(retries)
+
+    return {"actions": enriched, "count": len(enriched), "experiment_id": experiment_id, "engine": engine}
+
+
+def _enrich_with_predictions(rows: list[dict]) -> list[dict]:
+    """Attach predicted_p_recovery + predicted_enpv to each action row.
+
+    No-op (returns rows untouched) when the model isn't trained, so this is
+    safe to call on every request without a feature-flag check at the caller.
+
+    Uses the batched `infer.predict_batch` so a 5000-row retries response
+    is a single Booster.predict call rather than 5000 round-trips.
+    """
+    try:
+        import sys
+        from pathlib import Path
+        repo_root = Path(__file__).resolve().parents[3]
+        xg_dir = repo_root / "XG_DATA"
+        if str(xg_dir) not in sys.path:
+            sys.path.insert(0, str(xg_dir))
+        import infer
+    except Exception:
+        return rows
+
+    if not infer.is_ready():
+        return rows
+
+    feat_dicts = [
+        {
+            "amount": row.get("amount"),
+            "retry_number": row.get("retry_number"),
+            "action_type": row.get("action_type"),
+            "payment_method": row.get("payment_method"),
+            "failure_code": row.get("failure_code"),
+            "customer_declined": row.get("customer_declined"),
+        }
+        for row in rows
+    ]
+    try:
+        preds = infer.predict_batch(feat_dicts)
+    except Exception:
+        return rows
+
+    out = []
+    for row, pred in zip(rows, preds):
+        row = dict(row)
+        row["predicted_p_recovery"] = pred.get("p_recovery")
+        row["predicted_enpv"] = pred.get("enpv")
+        row["has_model"] = pred.get("has_model", False)
+        out.append(row)
+    return out
 
 
 @router.get("/recovery/experiments/parallel/{experiment_id}/cases/{case_id}")
@@ -1660,4 +1731,57 @@ def get_rail_health_insights(
             "healthy" if not degraded
             else f"degraded: {', '.join(degraded)}"
         ),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# ML model inference endpoint (XGBoost trained in XG_DATA/train.py)            #
+# --------------------------------------------------------------------------- #
+
+
+class MLPredictRequest(BaseModel):
+    features: dict
+
+
+@router.post("/ml/predict")
+def ml_predict(payload: MLPredictRequest) -> dict:
+    """Predict P(recovery) and ENPV for a single recovery action.
+
+    `features` mirrors the columns of sara_recovery_actions.csv; the only
+    required key is `amount`. All other keys default to 0 / False.
+
+    If the model hasn't been trained yet, returns has_model=False with
+    null predictions rather than raising — the UI renders '—' in that case.
+    """
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    xg_dir = repo_root / "XG_DATA"
+    if str(xg_dir) not in sys.path:
+        sys.path.insert(0, str(xg_dir))
+
+    try:
+        import infer
+    except Exception as e:  # xgboost/pandas not installed yet, etc.
+        return {
+            "has_model": False,
+            "p_recovery": None,
+            "enpv": None,
+            "error": f"infer module unavailable: {e}",
+        }
+
+    if not infer.is_ready():
+        return {
+            "has_model": False,
+            "p_recovery": None,
+            "enpv": None,
+            "error": infer.load_error() or "model not trained",
+        }
+
+    out = infer.predict(payload.features or {})
+    return {
+        "has_model": out.get("has_model", False),
+        "p_recovery": out.get("p_recovery"),
+        "enpv": out.get("enpv"),
     }

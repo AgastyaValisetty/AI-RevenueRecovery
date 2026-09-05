@@ -176,7 +176,7 @@ function App() {
         return (
           <Dashboard
             people={people}
-            ledger={ledger}
+            merchants={merchants}
             simulation={simulation}
             bankStatus={bankStatus}
             loading={loading}

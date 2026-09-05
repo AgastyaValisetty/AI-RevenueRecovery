@@ -1,9 +1,16 @@
 import React from "react";
-import { Users, BookOpen, Repeat, CreditCard, TrendingUp } from "./ui/icons";
-import { money, pct, formatCurrency } from "../utils/format";
+import { Users, BookOpen, Storefront, PlayCircle, TrendingUp } from "./ui/icons";
 import ScrollFade from "./ui/ScrollFade";
 
-const Dashboard = ({ people, ledger, simulation, bankStatus, loading, onRefresh, setActiveTab }) => {
+const Dashboard = ({
+  people,
+  merchants,
+  simulation,
+  bankStatus,
+  loading,
+  onRefresh,
+  setActiveTab,
+}) => {
   const summaryCards = [
     {
       title: "Total People",
@@ -13,29 +20,13 @@ const Dashboard = ({ people, ledger, simulation, bankStatus, loading, onRefresh,
       onClick: () => setActiveTab && setActiveTab("people"),
     },
     {
-      title: "Ledger Entries",
-      value: ledger?.length ?? 0,
-      desc: "Recorded transactions",
-      icon: BookOpen,
-      onClick: () => setActiveTab && setActiveTab("transactions"),
-    },
-    {
-      title: "Active Subscriptions",
-      value: simulation?.subscriptions ?? 0,
-      desc: "Recurring billing",
-      icon: Repeat,
+      title: "Merchants",
+      value: merchants?.length ?? 0,
+      desc: "Ecosystem partners",
+      icon: Storefront,
       onClick: () => setActiveTab && setActiveTab("merchants"),
     },
-    {
-      title: "Bank Status",
-      value: bankStatus?.current_state || "—",
-      desc: `${pct(bankStatus?.authorization_success_rate, 100) || "—"} auth success`,
-      icon: CreditCard,
-    },
   ];
-
-  const failureRate = Number(bankStatus?.failure_rate || 0);
-  const successRate = Number(bankStatus?.success_rate || 0);
 
   return (
     <div className="dashboard">
@@ -50,10 +41,20 @@ const Dashboard = ({ people, ledger, simulation, bankStatus, loading, onRefresh,
             <p className="hero-subtitle">
               Day {simulation?.currentDayDisplay ?? "—"} • {simulation?.currentDate ?? "—"}
             </p>
+            <button
+              className="btn btn-primary"
+              style={{ marginTop: "14px" }}
+              onClick={() => setActiveTab && setActiveTab("simulation")}
+            >
+              <PlayCircle size={16} />
+              <span>Go to Simulation Runner</span>
+            </button>
           </div>
           <div className="hero-mark">
             <TrendingUp size={40} />
-            <span className="hero-mark-label">₹{(Number(bankStatus?.volume_settled) || 0).toLocaleString('en-IN')}</span>
+            <span className="hero-mark-label">
+              ₹{(Number(bankStatus?.volume_settled) || 0).toLocaleString("en-IN")}
+            </span>
           </div>
         </section>
       </ScrollFade>
@@ -87,37 +88,54 @@ const Dashboard = ({ people, ledger, simulation, bankStatus, loading, onRefresh,
         <section className="panel">
           <div className="panel-header">
             <div className="panel-title-group">
-              <CreditCard size={18} />
-              <span className="panel-title">Bank Health</span>
+              <Users size={18} />
+              <span className="panel-title">People</span>
+              <span className="badge-count">{people?.length ?? 0} Profiles</span>
             </div>
             <button
               className="btn btn-outline"
               style={{ padding: "6px 12px", fontSize: "12px" }}
-              onClick={onRefresh}
-              disabled={loading}
+              onClick={() => setActiveTab && setActiveTab("people")}
             >
-              Refresh
+              View all
             </button>
           </div>
-          <div className="bank-health-grid">
-            <div className="health-item">
-              <span className="health-label">Success rate</span>
-              <span className="health-value">{pct(successRate, 100)}</span>
-            </div>
-            <div className="health-item">
-              <span className="health-label">Failure rate</span>
-              <span className="health-value">{pct(failureRate, 100)}</span>
-            </div>
-            <div className="health-item">
-              <span className="health-label">Volume settled</span>
-              <span className="health-value">{formatCurrency(Number(bankStatus?.volume_settled) || 0)}</span>
-            </div>
-            <div className="health-item">
-              <span className="health-label">Current state</span>
-              <span className={`tag-badge ${bankStatus?.current_state ? `state-${bankStatus.current_state.toLowerCase()}` : "tag-default"}`}>
-                {bankStatus?.current_state || "—"}
-              </span>
-            </div>
+          <div className="table-responsive">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Income Bracket</th>
+                  <th>Spending Profile</th>
+                  <th>Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(people ?? []).slice(0, 8).map((p, i) => (
+                  <tr
+                    key={p.person_id || i}
+                    className="clickable-row"
+                    onClick={() => setActiveTab && setActiveTab("people")}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td className="primary-cell">{p.name || "—"}</td>
+                    <td className="text-sm">{p.income_bracket || "—"}</td>
+                    <td className="text-sm text-secondary">{p.spending_profile_category || "—"}</td>
+                    <td className="mono-cell">₹{(Number(p.current_balance) || 0).toLocaleString("en-IN")}</td>
+                  </tr>
+                ))}
+                {(!people || people.length === 0) && (
+                  <tr>
+                    <td colSpan="4">
+                      <div className="empty-state">
+                        <Users size={24} />
+                        <p>Run the simulation to generate people.</p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </section>
       </ScrollFade>
@@ -126,39 +144,48 @@ const Dashboard = ({ people, ledger, simulation, bankStatus, loading, onRefresh,
         <section className="panel">
           <div className="panel-header">
             <div className="panel-title-group">
-              <BookOpen size={18} />
-              <span className="panel-title">Recent Ledger Activity</span>
+              <Storefront size={18} />
+              <span className="panel-title">Merchants</span>
+              <span className="badge-count">{merchants?.length ?? 0} Partners</span>
             </div>
+            <button
+              className="btn btn-outline"
+              style={{ padding: "6px 12px", fontSize: "12px" }}
+              onClick={() => setActiveTab && setActiveTab("merchants")}
+            >
+              View all
+            </button>
           </div>
           <div className="table-responsive">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Event</th>
-                  <th>Amount</th>
-                  <th>Time</th>
+                  <th>Merchant</th>
+                  <th>Type</th>
+                  <th>ID</th>
                 </tr>
               </thead>
               <tbody>
-                {(ledger ?? []).slice(0, 8).map((entry, i) => (
-                  <tr key={i}>
-                    <td className="primary-cell" style={{ fontSize: "12px" }}>{entry.event_type}</td>
-                    <td className="mono-cell">
-                      <span className={entry.event_type?.includes("DEPOSIT") ? "currency-positive" : "currency"}>
-                        {entry.event_type?.includes("DEPOSIT") ? "+" : "-"}₹{(Number(entry.amount) || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}
-                      </span>
-                    </td>
-                    <td className="mono-cell" style={{ fontSize: "11px" }}>
-                      {entry.timestamp || entry.simulation_timestamp || "—"}
+                {(merchants ?? []).slice(0, 8).map((m, i) => (
+                  <tr
+                    key={m.merchant_id || i}
+                    className="clickable-row"
+                    onClick={() => setActiveTab && setActiveTab("merchants")}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td className="primary-cell">{m.name || "—"}</td>
+                    <td className="text-sm">{m.merchant_type || "—"}</td>
+                    <td className="mono-cell text-xs text-tertiary">
+                      {m.merchant_id ? m.merchant_id.slice(0, 8) + "…" : "—"}
                     </td>
                   </tr>
                 ))}
-                {(!ledger || ledger.length === 0) && (
+                {(!merchants || merchants.length === 0) && (
                   <tr>
                     <td colSpan="3">
                       <div className="empty-state">
-                        <BookOpen size={24} />
-                        <p>Run the simulation to generate ledger activity.</p>
+                        <Storefront size={24} />
+                        <p>Run the simulation to generate merchants.</p>
                       </div>
                     </td>
                   </tr>

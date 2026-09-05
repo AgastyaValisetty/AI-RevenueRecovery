@@ -1,27 +1,33 @@
-"""Step 2 of the XG_DATA pipeline: train XGBoost on the recovery CSV and
-write predicted_probability_of_recovery + enpv back into the same data.
+"""Train + score an XGBoost model on sara_recovery_actions.csv and write
+predicted_probability_of_recovery + enpv back into the same data.
 
 Usage (from repo root):
-
     python XG_DATA/train_xgb_model.py
-    #   --input  XG_DATA/sara_recovery_training.csv
+    #   --input  XG_DATA/sara_recovery_actions.csv
     #   --output XG_DATA/sara_recovery_scored.csv
     #   --model-out XG_DATA/xgb_model.json
 
 What this script does:
-
-1. Loads sara_recovery_training.csv (output of build_training_table.py).
-2. Drops non-feature columns (identifiers, string columns, the target).
-3. Splits 80/20 stratified on ground_truth_recovered.
-4. Trains an XGBoost regressor (reg:squarederror) with early stopping.
-5. Scores the entire CSV and writes the predictions back as two new columns:
+1. Loads sara_recovery_actions.csv.
+2. Derives the binary target from the `outcome` column
+       (1 if outcome == 'SUCCESS', else 0).
+3. Engineers a numeric feature matrix from the columns we trust as
+   predictors (amount, retry_number, action_type, payment_method,
+   failure_code, customer_declined).
+4. Splits 80/20 stratified, trains XGBClassifier, evaluates AUC +
+   logloss + Brier.
+5. Scores the entire CSV and writes the predictions back as two new
+   columns:
      - predicted_probability_of_recovery
      - enpv  (via enpv.compute_enpv)
-6. Saves the trained model as xgb_model.json (portable XGBoost JSON).
+6. Saves the trained model as xgb_model.json.
 7. Prints metrics + top-10 feature importances.
 
-The CSV output is the deliverable the SARA retry ledger will eventually
-display. Wiring it into the live UI is a separate task.
+Companion files:
+  - XG_DATA/train.py     : minimal trainer that writes model/meta.json
+                            for the live UI inference path (infer.py).
+  - XG_DATA/infer.py     : loads model + meta + serves predict().
+  - XG_DATA/enpv.py      : ENPV formula used both here and in SARA.
 """
 from __future__ import annotations
 
@@ -40,99 +46,122 @@ from enpv import compute_enpv
 # Constants
 # --------------------------------------------------------------------------- #
 
-INPUT_DEFAULT = Path(__file__).resolve().parent / "sara_recovery_training.csv"
+INPUT_DEFAULT = Path(__file__).resolve().parent / "sara_recovery_actions.csv"
 OUTPUT_DEFAULT = Path(__file__).resolve().parent / "sara_recovery_scored.csv"
 MODEL_DEFAULT = Path(__file__).resolve().parent / "xgb_model.json"
 
-# Columns that we DROP from the feature matrix before training. Anything not
-# in this list is treated as a feature.
-NON_FEATURE_COLUMNS: tuple[str, ...] = (
-    # Identifiers — useless for prediction, just for traceability
-    "attempt_id",
-    "intent_id",
-    "person_id",
-    "merchant_id",
-    "source_account_id",
-    "destination_account_id",
-    "correlation_id",
-    "bank_id",
-    "related_subscription_id",
-    "bank_name",
-    # Free-text / categorical string columns (kept in the CSV for review but
-    # one-hot versions are the actual features)
-    "failure_code",
-    "failure_reason",
-    # Raw timestamp — derived features are in the matrix
-    "simulation_timestamp",
-    "last_failure_ts",
-    # Targets / labels / derived labels (not features)
-    "ground_truth_recovered",
-    "num_retries_taken",
-    "time_to_recover_hours",
-    "first_retry_outcome",
-    # Per-row scalar fields that are also captured in one-hot variants
-    # (kept in CSV for review; not used as numeric features).
-    "amount",                 # captured via amount_bucket one-hot
-    "payment_method",         # one-hot
-    "bank_state",             # one-hot
-    "failure_category",       # one-hot
-    "merchant_type",          # one-hot
-    "amount_bucket",          # one-hot
-    "income_bracket",         # one-hot
-    "age_group",              # one-hot
-    "employment_type",        # one-hot
-    "spending_profile_category",  # one-hot
-    "subscription_billing_cycle",  # one-hot
-    "day_of_week",            # one-hot
-    "next_billing_date",      # captured via days_until_next_billing
-    "payment_preferences_json",  # expanded into upi_pref/card_pref/netbanking_pref
+# Categorical predictors kept compact for the UI's infer.py consumer.
+# (Matches the feature_columns list in model/meta.json so the produced
+# model file is interchangeable with the trainer in train.py.)
+ACTION_TYPES = ("RETRY", "SEND_PAYMENT_LINK", "SEND_NOTIFICATION", "STOP")
+PAYMENT_METHODS = ("UPI", "CARD", "NETBANKING")
+FAILURE_CODES = (
+    "INSUFFICIENT_FUNDS",
+    "NETWORK_ERROR",
+    "INVALID_DETAILS",
+    "BANK_DECLINE",
+    "AUTHENTICATION",
 )
 
-# Columns the user explicitly asked to see in the SARA table (output cols)
 PRED_OUTPUT_COL = "predicted_probability_of_recovery"
 ENPV_OUTPUT_COL = "enpv"
+
+
+# --------------------------------------------------------------------------- #
+# IO + feature engineering
+# --------------------------------------------------------------------------- #
+
+def load_dataset(csv_path: Path) -> pd.DataFrame:
+    """Read the recovery-actions CSV; error out clearly if missing."""
+    if not csv_path.exists():
+        raise FileNotFoundError(
+            f"Training CSV not found at {csv_path}. "
+            "Generate it with XG_DATA/extract_sara_recovery.py first."
+        )
+    df = pd.read_csv(csv_path)
+    print(f"[xgdata] Loaded {len(df)} rows, {len(df.columns)} columns from {csv_path}")
+    if "outcome" not in df.columns:
+        raise ValueError(
+            "Training CSV is missing `outcome` — "
+            "is this really a SARA recovery-actions export?"
+        )
+    return df
+
+
+def _str_lower(df: pd.DataFrame, col: str) -> pd.Series:
+    return df[col].fillna("").astype(str).str.lower()
+
+
+def _one_hot(series: pd.Series, choices: tuple[str, ...]) -> pd.DataFrame:
+    """Return a DataFrame with one column per choice (0/1 ints)."""
+    s = series.astype(str)
+    return pd.DataFrame(
+        {f"{series.name}_{c}": (s == c).astype(int) for c in choices},
+        index=series.index,
+    )
+
+
+def build_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Engineer the feature matrix used for training + scoring.
+
+    Output columns (stable order):
+      amount, retry_number, customer_declined,
+      is_retry, is_payment_link, is_notification, is_stop,
+      is_upi, is_card, is_netbanking,
+      fc_INSUFFICIENT_FUNDS, fc_NETWORK_ERROR, fc_INVALID_DETAILS,
+      fc_BANK_DECLINE, fc_AUTHENTICATION, fc_OTHER.
+    """
+    out = pd.DataFrame(index=df.index)
+
+    out["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0)
+    out["retry_number"] = pd.to_numeric(df["retry_number"], errors="coerce").fillna(0)
+
+    out["customer_declined"] = (
+        _str_lower(df, "customer_declined").eq("true").astype(int)
+    )
+
+    action = _str_lower(df, "action_type")
+    out = pd.concat([out, _one_hot(action.rename("is"), ACTION_TYPES)], axis=1)
+
+    method = _str_lower(df, "payment_method")
+    out = pd.concat([out, _one_hot(method.rename("is"), PAYMENT_METHODS)], axis=1)
+
+    fc = _str_lower(df, "failure_code")
+    fc_oh = _one_hot(fc.rename("fc"), FAILURE_CODES)
+    fc_oh["fc_OTHER"] = (
+        ~fc.isin(FAILURE_CODES) & (fc != "")
+    ).astype(int)
+    out = pd.concat([out, fc_oh], axis=1)
+
+    # Stable column order
+    cols = [
+        "amount", "retry_number", "customer_declined",
+        *[f"is_{a}" for a in ACTION_TYPES],
+        *[f"is_{m}" for m in PAYMENT_METHODS],
+        *[f"fc_{c}" for c in FAILURE_CODES],
+        "fc_OTHER",
+    ]
+    return out[cols].astype(float)
 
 
 # --------------------------------------------------------------------------- #
 # Training + scoring
 # --------------------------------------------------------------------------- #
 
-def load_dataset(csv_path: Path) -> pd.DataFrame:
-    """Read the training CSV and force numeric columns."""
-    if not csv_path.exists():
-        raise FileNotFoundError(
-            f"Training CSV not found at {csv_path}. "
-            "Run XG_DATA/build_training_table.py first."
-        )
-    df = pd.read_csv(csv_path)
-    print(f"[xgdata] Loaded {len(df)} rows, {len(df.columns)} columns from {csv_path}")
-    if "ground_truth_recovered" not in df.columns:
-        raise ValueError(
-            "Training CSV is missing `ground_truth_recovered` — did the "
-            "build script's SQL query succeed?"
-        )
-    return df
+def derive_target(df: pd.DataFrame) -> pd.Series:
+    """Binary target: 1 if outcome == 'SUCCESS', else 0.
 
-
-def split_features_target(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str]]:
-    """Return (X, y, feature_column_names)."""
-    y = df["ground_truth_recovered"].astype(int)
-    feature_cols = [c for c in df.columns if c not in NON_FEATURE_COLUMNS]
-    X = df[feature_cols].copy()
-    # Force numeric (any object/str columns leak through here would explode XGBoost).
-    for col in feature_cols:
-        if X[col].dtype == object:
-            X[col] = pd.to_numeric(X[col], errors="coerce")
-    X = X.fillna(0.0).astype(float)
-    return X, y, feature_cols
+    Rows with outcome in {PENDING, STOPPED, missing} are kept as 0
+    (negative examples) — only true settlement outcomes count as
+    positive.
+    """
+    return (_str_lower(df, "outcome") == "success").astype(int)
 
 
 def stratified_split(
     X: pd.DataFrame, y: pd.Series, *, eval_frac: float = 0.2, seed: int = 42
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
-    """80/20 stratified split (numpy-free, deterministic)."""
+):
     from sklearn.model_selection import train_test_split
-
     return train_test_split(
         X, y, test_size=eval_frac, stratify=y, random_state=seed
     )
@@ -145,51 +174,38 @@ def train_xgb(
     y_eval: pd.Series,
     *,
     n_estimators: int = 400,
-    max_depth: int = 6,
+    max_depth: int = 4,
     learning_rate: float = 0.05,
-    early_stopping_rounds: int = 20,
     seed: int = 42,
 ):
-    """Train an XGBoost regressor. Returns the fitted model."""
     import xgboost as xgb
 
-    model = xgb.XGBRegressor(
+    model = xgb.XGBClassifier(
         n_estimators=n_estimators,
         max_depth=max_depth,
         learning_rate=learning_rate,
-        objective="reg:squarederror",
-        eval_metric="logloss",
+        subsample=0.8,
+        colsample_bytree=0.8,
+        objective="binary:logistic",
+        eval_metric="auc",
         tree_method="hist",
         random_state=seed,
         n_jobs=-1,
     )
-    model.fit(
-        X_train, y_train,
-        eval_set=[(X_eval, y_eval)],
-        verbose=False,
-    )
-    # Apply early stopping manually if available in this xgboost version.
-    if early_stopping_rounds and getattr(model, "best_iteration", None) is not None:
-        print(
-            f"[xgdata] XGBoost best_iteration={model.best_iteration} "
-            f"(trained {n_estimators}, stopped early at {early_stopping_rounds})"
-        )
+    model.fit(X_train, y_train, eval_set=[(X_eval, y_eval)], verbose=False)
     return model
 
 
-def compute_metrics(
-    y_true: pd.Series, y_pred: np.ndarray
-) -> dict[str, float]:
-    """AUC + log-loss + Brier score. Sklearn is the source of truth."""
+def compute_metrics(y_true: pd.Series, y_pred: np.ndarray) -> dict[str, float]:
     from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
 
     y_pred_clipped = np.clip(y_pred, 1e-6, 1 - 1e-6)
-    metrics: dict[str, float] = {}
-    metrics["count"] = int(len(y_true))
-    metrics["positive_rate"] = float(y_true.mean())
-    metrics["mean_predicted_probability"] = float(y_pred.mean())
+    metrics: dict[str, float] = {
+        "count": int(len(y_true)),
+        "positive_rate": float(y_true.mean()),
+        "mean_predicted_probability": float(y_pred.mean()),
+    }
     if y_true.nunique() < 2:
-        # Degenerate split (all 0s or all 1s); AUC undefined.
         metrics["auc"] = float("nan")
     else:
         metrics["auc"] = float(roc_auc_score(y_true, y_pred))
@@ -198,10 +214,7 @@ def compute_metrics(
     return metrics
 
 
-def top_feature_importance(
-    model, feature_cols: list[str], *, top_n: int = 10
-) -> list[tuple[str, float]]:
-    """Return top-N (feature, importance) pairs from the trained model."""
+def top_feature_importance(model, feature_cols: list[str], *, top_n: int = 10):
     importances = model.feature_importances_
     pairs = sorted(
         zip(feature_cols, importances.tolist()),
@@ -214,13 +227,13 @@ def top_feature_importance(
 def score_and_enpv(
     df: pd.DataFrame, model, X_all: pd.DataFrame
 ) -> pd.DataFrame:
-    """Add `predicted_probability_of_recovery` + `enpv` columns."""
-    y_hat = np.clip(model.predict(X_all), 0.0, 1.0)
+    """Add predicted_probability_of_recovery + enpv columns to df."""
+    y_hat = np.clip(model.predict_proba(X_all)[:, 1], 0.0, 1.0)
     df = df.copy()
     df[PRED_OUTPUT_COL] = y_hat
     df[ENPV_OUTPUT_COL] = [
         float(compute_enpv(p, a))
-        for p, a in zip(y_hat, df["amount"].fillna(0.0))
+        for p, a in zip(y_hat, pd.to_numeric(df["amount"], errors="coerce").fillna(0.0))
     ]
     return df
 
@@ -241,7 +254,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
                         help=f"XGBoost model file (default {MODEL_DEFAULT}).")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n-estimators", type=int, default=400)
-    parser.add_argument("--max-depth", type=int, default=6)
+    parser.add_argument("--max-depth", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=0.05)
     return parser.parse_args(argv)
 
@@ -253,15 +266,17 @@ def main(argv: Iterable[str] | None = None) -> int:
     if df.empty:
         print("[xgdata] ERROR: training CSV is empty.")
         return 1
-    if df["ground_truth_recovered"].nunique() < 2:
+
+    y = derive_target(df)
+    if y.nunique() < 2:
         print(
-            "[xgdata] ERROR: ground_truth_recovered has a single value. "
-            "The simulation produced no successful recoveries — train on a "
-            "larger / longer simulation."
+            "[xgdata] ERROR: outcome column has only a single value "
+            "(only SUCCESS or only FAILED). No recoverable signal — "
+            "train on a longer / larger simulation."
         )
         return 1
 
-    X, y, feature_cols = split_features_target(df)
+    X = build_features(df)
     print(f"[xgdata] Feature matrix: {X.shape[0]} rows × {X.shape[1]} cols")
     print(f"[xgdata] Positive rate: {y.mean():.3f} ({int(y.sum())}/{len(y)})")
 
@@ -278,13 +293,13 @@ def main(argv: Iterable[str] | None = None) -> int:
         seed=args.seed,
     )
 
-    train_metrics = compute_metrics(y_train, model.predict(X_train))
-    eval_metrics = compute_metrics(y_eval, model.predict(X_eval))
+    train_metrics = compute_metrics(y_train, model.predict_proba(X_train)[:, 1])
+    eval_metrics = compute_metrics(y_eval, model.predict_proba(X_eval)[:, 1])
     print("[xgdata] Train metrics:", json.dumps(train_metrics, indent=2))
     print("[xgdata] Eval  metrics:", json.dumps(eval_metrics, indent=2))
 
     print("[xgdata] Top-10 feature importances (gain):")
-    for name, imp in top_feature_importance(model, feature_cols, top_n=10):
+    for name, imp in top_feature_importance(model, list(X.columns), top_n=10):
         print(f"   {name:38s}  {imp:.4f}")
 
     df_scored = score_and_enpv(df, model, X)
@@ -294,19 +309,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         f"{len(df_scored.columns)} cols (added {PRED_OUTPUT_COL}, {ENPV_OUTPUT_COL})."
     )
 
-    # Save the model. Try JSON first (portable across xgboost versions),
-    # fall back to the binary JSON format that always works.
-    try:
-        model.save_model(str(args.model_out))
-        print(f"[xgdata] Saved XGBoost model to {args.model_out}")
-    except Exception as exc:
-        # Fall back: xgboost's `save_model` writes JSON for json files,
-        # binary for others. We use .json explicitly.
-        import xgboost as xgb
-        booster = model.get_booster()
-        booster.save_model(str(args.model_out))
-        print(f"[xgdata] Saved XGBoost model (fallback) to {args.model_out}: {exc}")
-
+    model.save_model(str(args.model_out))
+    print(f"[xgdata] Saved XGBoost model to {args.model_out}")
     return 0
 
 
