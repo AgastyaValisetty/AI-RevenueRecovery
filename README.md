@@ -41,6 +41,20 @@ Hit any service directly:
 
 ---
 
+## 🗺️ UML diagrams — quick jump
+
+Full diagrams live at the bottom of this README → [📐 UML diagrams](#-uml-diagrams). Jump to a section:
+
+| Jump to | What it shows |
+|---|---|
+| [🏛️ Class diagrams](#%EF%B8%8F-class-diagrams) | Aggregate + per-service class structure (People, LazerPay, RupeeBank, Recovery Agent) |
+| [🧩 Deployment diagram](#-deployment-diagram) | Container topology: services, DB, frontend, ports |
+| [🗄️ ER diagram](#%EF%B8%8F-er-diagram) | PostgreSQL schema and relationships |
+| [🔁 Sequence diagrams](#-sequence-diagrams) | Payment success flow + failure & recovery flow |
+| [🎛️ State machines](#%EF%B8%8F-state-machines--activity) | Bank state, payment attempt state, recovery agent activity |
+
+---
+
 ## 🏗️ Architecture
 
 ```
@@ -630,3 +644,75 @@ Indexes: `timestamp`, `(bank_id, timestamp)`, `outcome`.
 - `ARCHITECTURE.md` — full microservices specification with state diagrams.
 - `UML_Design.md` — UML diagrams referenced by the architecture.
 - `services/people_service/app/recovery/smart_agent/` — SARA source: `action_value.py` (ENPV), `policy.py` (gates), `agent.py` (orchestration), `audit.py`, `counterfactual.py`, `experiment_runner.py`, `parallel_runner.py`.
+
+---
+
+## 📐 UML diagrams
+
+All diagrams are rendered PNGs in [`uml/`](./uml/). The PlantUML sources live in the same directory (`*.puml`).
+
+### 🏛️ Class diagrams
+
+#### Aggregate classes (the whole domain in one view)
+
+![Aggregate Classes](./uml/Aggregate_Classes.png)
+
+#### People Service classes
+
+![People Service Classes](./uml/People_Services.png)
+
+#### LazerPay Service classes
+
+![LazerPay Classes](./uml/LazerPay.png)
+
+#### RupeeBank Service classes
+
+![RupeeBank Classes](./uml/Rupee_Bank_Classes.png)
+
+#### Smart Recovery Agent (SARA) classes
+
+![Recovery Agent Classes](./uml/Recovery_Agent.png)
+
+---
+
+### 🧩 Deployment diagram
+
+How the services, the database, and the frontend wire together in `docker compose up`:
+
+![Deployment Diagram](./uml/Deployment_Diagram.png)
+
+---
+
+### 🗄️ ER diagram
+
+PostgreSQL schema (shared across all 3 backend services, with parallel-experiment schemas for A/B runs):
+
+![DB Relations](./uml/DB_Relations.png)
+
+---
+
+### 🔁 Sequence diagrams
+
+#### Happy path — payment success
+
+![Payment Success Sequence](./uml/Payment_Sucess_Sequence.png)
+
+#### Failure path — recovery agent kicks in
+
+![Payment Failure Sequence](./uml/Payment_Failure_Sequence.png)
+
+---
+
+### 🎛️ State machines & activity
+
+#### Bank state machine (`NORMAL → PEAK → DEGRADED → OUTAGE`)
+
+![Bank State Diagram](./uml/Bank_State_Diagram.png)
+
+#### Payment-attempt state machine
+
+![Attempt State Diagram](./uml/Attempt_State_Diagram.png)
+
+#### Smart Recovery Agent (SARA) activity
+
+![Recovery Agent Activity](./uml/Recovery_Agent_Activity_Chart.png)
