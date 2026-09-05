@@ -34,6 +34,11 @@ services:
       - DB_USER=simulator
       - DB_PASSWORD=simulator_dev
       - DB_NAME=revenue_recovery
+      - REQUIREMENTS_PATH=/workspace/requirements.txt
+    # pip-install safety net runs on every `up`, then exec replaces sh with uvicorn
+    command: ["sh", "-c", "python /tools/pip_install.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    volumes:
+      - ./tools:/tools:ro
     ports:
       - "8000:8000"
     networks:
@@ -54,6 +59,10 @@ services:
       - DB_PASSWORD=simulator_dev
       - DB_NAME=revenue_recovery
       - BANK_PORT=8002
+      - REQUIREMENTS_PATH=/workspace/requirements.txt
+    command: ["sh", "-c", "python /tools/pip_install.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8002"]
+    volumes:
+      - ./tools:/tools:ro
     ports:
       - "8002:8002"
     networks:
@@ -74,8 +83,44 @@ services:
       - DB_PASSWORD=simulator_dev
       - DB_NAME=revenue_recovery
       - BANK_URL=http://bank_service:8002
+      - REQUIREMENTS_PATH=/workspace/requirements.txt
+    command: ["sh", "-c", "python /tools/pip_install.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8001"]
+    volumes:
+      - ./tools:/tools:ro
     ports:
       - "8001:8001"
+    networks:
+      - simulation_network
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile
+    container_name: revenue_recovery_frontend
+    depends_on:
+      - people_service
+    environment:
+      # Vite proxy must hit the docker DNS name (not localhost, which is
+      # the frontend container's own loopback).
+      - VITE_API_TARGET=http://people_service:8000
+    ports:
+      - "5173:5173"
+    networks:
+      - simulation_network
+
+  auto-seed:
+    build:
+      context: ./tools
+      dockerfile: auto_seed.Dockerfile
+    container_name: revenue_recovery_auto_seed
+    depends_on:
+      people_service:
+        condition: service_started
+    environment:
+      - PEOPLE_URL=http://people_service:8000
+      - SEED=42
+      - PEOPLE_COUNT=100
+    restart: "no"
     networks:
       - simulation_network
 

@@ -7,6 +7,7 @@ import "./SimulationRunner.css";
 export default function SimulationRunner({ simulation, onRefresh, onComparisonComplete }) {
   const [peopleCount, setPeopleCount] = useState(100);
   const [daysToRun, setDaysToRun] = useState(30);
+  const [seed, setSeed] = useState(42);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [lastResult, setLastResult] = useState(null);
@@ -18,13 +19,13 @@ export default function SimulationRunner({ simulation, onRefresh, onComparisonCo
     }
 
     setLoading(true);
-    setMessage(`Running ${days}-day simulation for ${peopleCount} people...`);
+    setMessage(`Running ${days}-day simulation for ${peopleCount} people (seed=${seed})...`);
 
     try {
-      const data = await runParallelExperiment(peopleCount, days * 24, 42);
+      const data = await runParallelExperiment(peopleCount, days * 24, seed);
       setLastResult(data);
       onComparisonComplete?.(data);
-      setMessage(`Completed! Baseline and SARA ran on ${peopleCount} people for ${days} days.`);
+      setMessage(`Completed! Baseline and SARA ran on ${peopleCount} people for ${days} days (seed=${seed}).`);
       onRefresh();
     } catch (e) {
       setMessage("Simulation failed. Check console for details.");
@@ -86,6 +87,18 @@ export default function SimulationRunner({ simulation, onRefresh, onComparisonCo
                   disabled={loading}
                 />
                 <span className="sim-hint">Advance the simulation clock (1-365 days)</span>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Seed (override)</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  value={seed}
+                  onChange={(e) => setSeed(parseInt(e.target.value) || 0)}
+                  disabled={loading}
+                />
+                <span className="sim-hint">Random seed (default 42 — same seed = same population)</span>
               </div>
 
               <div>

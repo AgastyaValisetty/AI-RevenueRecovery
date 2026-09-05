@@ -8,7 +8,7 @@ export async function fetchSimulationStatus() {
   return res.json();
 }
 
-export async function runSimulation(peopleCount = 100, days = 1) {
+export async function runSimulation(peopleCount = 100, days = 1, seed = null) {
   const res = await fetch('/api/simulation/run', {
     method: 'POST',
     headers: {
@@ -17,6 +17,7 @@ export async function runSimulation(peopleCount = 100, days = 1) {
     body: JSON.stringify({
       people_count: Number(peopleCount),
       days: Number(days),
+      seed: seed ?? null,
     }),
   });
   if (!res.ok) {
