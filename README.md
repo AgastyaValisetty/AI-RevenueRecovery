@@ -6,6 +6,12 @@ The stack models realistic payment failure modes (network errors, bank declines,
 
 ---
 
+## 🎬 Demo video
+
+**See it in action:** [https://youtu.be/kocWEJRxr0o](https://youtu.be/kocWEJRxr0o) (unlisted YouTube demo — 5 min walkthrough of the SARA recovery flow, ENPV scoring, and the comparison vs. baseline engine).
+
+---
+
 ## 🧭 TL;DR — start it
 
 **Just run one command:**
